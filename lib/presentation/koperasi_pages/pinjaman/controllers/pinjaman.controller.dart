@@ -21,11 +21,11 @@ class PinjamanController extends GetxController {
   void actionChoice(int index) {
     switch (index) {
       case 0:
-        Get.toNamed(Routes.AJUKAN_PINJAMAN);
+        Get.toNamed(Routes.LOAN_V2_APPLICATION);
       case 1:
-        Get.toNamed(Routes.DAFTAR_PENGAJUAN_PINJAMAN);
+        Get.toNamed(Routes.LOAN_V2);
       case 2:
-        Get.toNamed(Routes.TAGIHAN_BULANAN_PINJAMAN);
+        Get.toNamed(Routes.LOAN_V2);
     }
   }
 }

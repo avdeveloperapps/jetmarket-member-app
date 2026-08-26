@@ -218,13 +218,13 @@ packages:
     source: hosted
     version: "0.3.5+2"
   crypto:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: crypto
-      sha256: ff625774173754681d66daaf4a448684fb04b78f902da9cb3d308c19cc5e8bab
+      sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
       url: "https://pub.dev"
     source: hosted
-    version: "3.0.3"
+    version: "3.0.7"
   csslib:
     dependency: transitive
     description:
@@ -886,7 +886,7 @@ packages:
     source: hosted
     version: "4.0.2"
   image:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: image
       sha256: "4e973fcf4caae1a4be2fa0a13157aa38a8f9cb049db6529aa00b4d71abc4d928"
@@ -1365,6 +1365,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.1"
+  quiver:
+    dependency: transitive
+    description:
+      name: quiver
+      sha256: ea0b925899e64ecdfbf9c7becb60d5b50e706ade44a85b2363be2a22d88117d2
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.2.2"
   rxdart:
     dependency: "direct main"
     description:
@@ -1674,6 +1682,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.11"
+  tflite_flutter:
+    dependency: "direct main"
+    description:
+      name: tflite_flutter
+      sha256: "48e6fde2ad97162bb66a16a142f4c4698add9e8cd397ce9d1cc7451b55537ac1"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.11.0"
   timezone:
     dependency: transitive
     description:

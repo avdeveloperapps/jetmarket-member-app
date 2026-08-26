@@ -61,6 +61,9 @@ export 'package:jetmarket/presentation/koperasi_pages/koperasi/koperasi.screen.d
 export 'package:jetmarket/presentation/koperasi_pages/payment_tabungan_success/payment_tabungan_success.screen.dart';
 export 'package:jetmarket/presentation/koperasi_pages/pengajuan_proses_pinjaman/pengajuan_proses_pinjaman.screen.dart';
 export 'package:jetmarket/presentation/koperasi_pages/pinjaman/pinjaman.screen.dart';
+export 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_v2_application.screen.dart';
+export 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_v2_detail.screen.dart';
+export 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_v2_home.screen.dart';
 export 'package:jetmarket/presentation/koperasi_pages/tabungan/tabungan.screen.dart';
 export 'package:jetmarket/presentation/koperasi_pages/tabungan_payment/tabungan_payment.screen.dart';
 export 'package:jetmarket/presentation/koperasi_pages/tabungan_wajib/tabungan_wajib.screen.dart';

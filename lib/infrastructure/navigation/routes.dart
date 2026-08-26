@@ -79,6 +79,9 @@ class Routes {
   static const PAYMENT_TOPUP_SALDO = '/payment-topup-saldo';
   static const PENGAJUAN_PROSES_PINJAMAN = '/pengajuan-proses-pinjaman';
   static const PINJAMAN = '/pinjaman';
+  static const LOAN_V2 = '/loan-v2';
+  static const LOAN_V2_APPLICATION = '/loan-v2/application';
+  static const LOAN_V2_DETAIL = '/loan-v2/detail';
   static const PRODUCT_BYCATEGORY = '/product-bycategory';
   static const REFERRAL = '/referral';
   static const REGISTER = '/register';

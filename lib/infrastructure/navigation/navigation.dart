@@ -291,6 +291,21 @@ class Nav {
       binding: PinjamanControllerBinding(),
     ),
     GetPage(
+      name: Routes.LOAN_V2,
+      page: () => const LoanV2HomeScreen(),
+      binding: LoanV2ControllerBinding(),
+    ),
+    GetPage(
+      name: Routes.LOAN_V2_APPLICATION,
+      page: () => const LoanV2ApplicationScreen(),
+      binding: LoanV2ControllerBinding(),
+    ),
+    GetPage(
+      name: Routes.LOAN_V2_DETAIL,
+      page: () => const LoanV2DetailScreen(),
+      binding: LoanV2ControllerBinding(),
+    ),
+    GetPage(
       name: Routes.HISTORY_TABUNGAN,
       page: () => const HistoryTabunganScreen(),
       binding: HistoryTabunganControllerBinding(),

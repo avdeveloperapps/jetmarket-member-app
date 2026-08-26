@@ -66,6 +66,7 @@ export 'package:jetmarket/infrastructure/navigation/bindings/controllers/payment
 export 'package:jetmarket/infrastructure/navigation/bindings/controllers/payment_topup_saldo.controller.binding.dart';
 export 'package:jetmarket/infrastructure/navigation/bindings/controllers/pengajuan_proses_pinjaman.controller.binding.dart';
 export 'package:jetmarket/infrastructure/navigation/bindings/controllers/pinjaman.controller.binding.dart';
+export 'package:jetmarket/infrastructure/navigation/bindings/controllers/loan_v2.controller.binding.dart';
 export 'package:jetmarket/infrastructure/navigation/bindings/controllers/product_bycategory.controller.binding.dart';
 export 'package:jetmarket/infrastructure/navigation/bindings/controllers/referral.controller.binding.dart';
 export 'package:jetmarket/infrastructure/navigation/bindings/controllers/register.controller.binding.dart';
