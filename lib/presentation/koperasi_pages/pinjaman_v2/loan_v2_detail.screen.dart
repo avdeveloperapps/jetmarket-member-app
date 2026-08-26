@@ -236,7 +236,7 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
     const messages = {
       'DRAFT': 'Lengkapi data dan pilih penjamin untuk melanjutkan.',
       'BORROWER_VERIFICATION_PENDING':
-          'Verifikasi wajah sedang diproses dengan MobileFaceNet.',
+          'Foto wajah dan active liveness sedang diverifikasi.',
       'WAITING_GUARANTOR_CONFIRMATION':
           'Menunggu konfirmasi dari seluruh penjamin.',
       'PENDING_ADMIN_REVIEW': 'Pengajuan menunggu proses admin.',

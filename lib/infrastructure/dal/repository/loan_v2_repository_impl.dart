@@ -150,6 +150,18 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
       _postMap('loan-applications/$applicationId/borrower-verification', body);
 
   @override
+  Future<DataState<Map<String, dynamic>>> createLivenessChallenge(
+          int applicationId) =>
+      _postMap('loan-applications/$applicationId/liveness-challenge', const {});
+
+  @override
+  Future<DataState<Map<String, dynamic>>> uploadLivenessEvidence(
+          int applicationId, int sessionId, String nonce, String path) =>
+      _upload(
+          'loan-applications/$applicationId/liveness-evidence', 'video', path,
+          fields: {'session_id': sessionId.toString(), 'nonce': nonce});
+
+  @override
   Future<DataState<Map<String, dynamic>>> signApplication(
           int applicationId, Map<String, dynamic> body) =>
       _postMap('loan-applications/$applicationId/application-signature', body);

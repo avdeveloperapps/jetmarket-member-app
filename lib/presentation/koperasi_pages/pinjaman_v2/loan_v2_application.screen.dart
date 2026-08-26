@@ -221,7 +221,7 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
         Text('Verifikasi dan TTD', style: text14BlackSemiBold),
         Gap(5.h),
         Text(
-            'Pastikan satu wajah terlihat jelas di tengah foto. MobileFaceNet memeriksa foto sebelum data wajah dan gambar TTD dikirim melalui jalur terenkripsi.',
+            'Ambil foto wajah, lalu ikuti tantangan active liveness dengan kamera depan. Video liveness dan gambar TTD dikirim melalui jalur terenkripsi.',
             style: text12HintRegular),
         Gap(14.h),
         Obx(() => _imagePicker(
@@ -235,23 +235,58 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
             onPressed: controller.facePath.value == null
                 ? null
                 : () async {
-                    await controller.submitFaceVerification();
+                    final success = await controller.submitFaceVerification();
+                    if (success && mounted) setState(() {});
                   }),
+        Gap(14.h),
+        Obx(() {
+          final challenge = controller.livenessChallenge.value;
+          if (challenge == null) return const SizedBox.shrink();
+          final actions = List<dynamic>.from(challenge['actions'] ?? []);
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Tantangan active liveness', style: text14BlackSemiBold),
+                Gap(5.h),
+                Text(
+                    'Rekam satu video sambil mengikuti urutan ini: ${actions.map(_livenessLabel).join(' → ')}.',
+                    style: text12HintRegular),
+                Gap(10.h),
+                _imagePicker(
+                    label: 'Video active liveness',
+                    path: controller.livenessVideoPath.value,
+                    onTap: controller.pickLivenessVideo),
+                Gap(10.h),
+                AppButton.secondary(
+                    text: 'Kirim Video Active Liveness',
+                    actionStatus: controller.actionStatus.value,
+                    onPressed: controller.livenessVideoPath.value == null
+                        ? null
+                        : () async {
+                            await controller.submitLivenessEvidence();
+                          }),
+              ]);
+        }),
         Gap(16.h),
-        Obx(() => _imagePicker(
-            label: 'Gambar TTD Dokumen Aplikasi',
-            path: controller.signaturePath.value,
-            onTap: controller.pickSignature)),
+        Obx(() => controller.livenessSubmitted.value
+            ? _imagePicker(
+                label: 'Gambar TTD Dokumen Aplikasi',
+                path: controller.signaturePath.value,
+                onTap: controller.pickSignature)
+            : Text(
+                'TTD tersedia setelah video active liveness berhasil dikirim.',
+                style: text12HintRegular)),
         Gap(10.h),
-        AppButton.primary(
+        Obx(() => AppButton.primary(
             text: 'TTD dan Kirim Pengajuan',
             actionStatus: controller.actionStatus.value,
-            onPressed: controller.signaturePath.value == null
+            onPressed: !controller.livenessSubmitted.value ||
+                    controller.signaturePath.value == null
                 ? null
                 : () async {
                     final success = await controller.sign('APPLICATION');
                     if (success) Get.offAllNamed(Routes.LOAN_V2);
-                  }),
+                  })),
       ]);
 
   Widget _imagePicker(
@@ -276,11 +311,20 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
                 Expanded(
                     child: Text(
                         path == null
-                            ? '$label: ambil foto'
+                            ? '$label: ambil dengan kamera'
                             : '$label sudah dipilih',
                         style: text12BlackRegular)),
                 const Icon(Icons.chevron_right_rounded)
               ])));
+
+  String _livenessLabel(dynamic action) => switch (action.toString()) {
+        'TURN_LEFT' => 'lihat kiri',
+        'TURN_RIGHT' => 'lihat kanan',
+        'LOOK_UP' => 'lihat atas',
+        'LOOK_DOWN' => 'lihat bawah',
+        'BLINK' => 'kedip',
+        _ => action.toString(),
+      };
   InputDecoration _decoration(String label) => InputDecoration(
       labelText: label,
       labelStyle: text12HintRegular,

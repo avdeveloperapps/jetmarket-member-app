@@ -35,6 +35,9 @@ class LoanV2Controller extends GetxController {
   final actionStatus = ActionStatus.initalize.obs;
   final ktpPath = RxnString();
   final facePath = RxnString();
+  final livenessVideoPath = RxnString();
+  final livenessChallenge = Rxn<Map<String, dynamic>>();
+  final livenessSubmitted = false.obs;
   final signaturePath = RxnString();
   final signatureReceipt = Rxn<Map<String, dynamic>>();
   final faceReceipt = Rxn<Map<String, dynamic>>();
@@ -122,6 +125,19 @@ class LoanV2Controller extends GetxController {
     if (image != null) signaturePath.value = image.path;
   }
 
+  Future<void> pickLivenessVideo() async {
+    if (livenessChallenge.value == null) {
+      Get.snackbar(
+          'Active liveness', 'Buat tantangan active liveness terlebih dahulu.');
+      return;
+    }
+    final video = await _picker.pickVideo(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        maxDuration: const Duration(seconds: 25));
+    if (video != null) livenessVideoPath.value = video.path;
+  }
+
   Future<bool> saveDraft(
       {required String purpose,
       required int requestedAmount,
@@ -195,6 +211,29 @@ class LoanV2Controller extends GetxController {
     return response.status == StatusResponse.success;
   }
 
+  Future<bool> submitLivenessEvidence() async {
+    final current = application.value;
+    final challenge = livenessChallenge.value;
+    if (current == null ||
+        challenge == null ||
+        livenessVideoPath.value == null) {
+      return false;
+    }
+    actionStatus(ActionStatus.loading);
+    final response = await _repository.uploadLivenessEvidence(
+        current['id'],
+        challenge['session_id'] as int,
+        challenge['nonce'] as String,
+        livenessVideoPath.value!);
+    actionStatus(response.status == StatusResponse.success
+        ? ActionStatus.success
+        : ActionStatus.failed);
+    if (response.status == StatusResponse.success) {
+      livenessSubmitted.value = true;
+    }
+    return response.status == StatusResponse.success;
+  }
+
   Future<bool> submitFaceVerification() async {
     final current = application.value;
     if (current == null || facePath.value == null) return false;
@@ -237,10 +276,18 @@ class LoanV2Controller extends GetxController {
       },
       'consent_accepted': true,
     });
-    actionStatus(response.status == StatusResponse.success
-        ? ActionStatus.success
-        : ActionStatus.failed);
-    return response.status == StatusResponse.success;
+    if (response.status != StatusResponse.success) {
+      actionStatus(ActionStatus.failed);
+      return false;
+    }
+    final challenge = await _repository.createLivenessChallenge(current['id']);
+    if (challenge.status != StatusResponse.success) {
+      actionStatus(ActionStatus.failed);
+      return false;
+    }
+    livenessChallenge.value = Map<String, dynamic>.from(challenge.result ?? {});
+    actionStatus(ActionStatus.success);
+    return true;
   }
 
   Future<bool> sign(String documentType) async {

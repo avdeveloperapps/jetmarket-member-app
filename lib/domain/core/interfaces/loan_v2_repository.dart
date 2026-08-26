@@ -18,6 +18,10 @@ abstract class LoanV2Repository {
       int applicationId, String path);
   Future<DataState<Map<String, dynamic>>> createBorrowerVerification(
       int applicationId, Map<String, dynamic> body);
+  Future<DataState<Map<String, dynamic>>> createLivenessChallenge(
+      int applicationId);
+  Future<DataState<Map<String, dynamic>>> uploadLivenessEvidence(
+      int applicationId, int sessionId, String nonce, String path);
   Future<DataState<Map<String, dynamic>>> uploadSignature(
       int applicationId, String documentType, String path);
   Future<DataState<Map<String, dynamic>>> signApplication(
