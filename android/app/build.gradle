@@ -21,6 +21,34 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+def releaseStoreFilePath = keystoreProperties.getProperty('storeFile')
+def releaseStoreFile = releaseStoreFilePath ? file(releaseStoreFilePath) : null
+def hasReleaseSigning = [
+    'keyAlias',
+    'keyPassword',
+    'storeFile',
+    'storePassword',
+].every { keystoreProperties.getProperty(it)?.trim() } && releaseStoreFile?.isFile()
+def allowDebugReleaseSigning = localProperties.getProperty(
+    'jetmarket.allowDebugReleaseSigning',
+    'false',
+).toBoolean()
+def isReleaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains('release')
+}
+
+if (isReleaseBuildRequested && !hasReleaseSigning && !allowDebugReleaseSigning) {
+    throw new GradleException(
+        'Release keystore tidak tersedia. Isi android/key.properties untuk build produksi, ' +
+        'atau aktifkan jetmarket.allowDebugReleaseSigning=true di android/local.properties ' +
+        'khusus untuk APK pengujian lokal.'
+    )
+}
+
+if (isReleaseBuildRequested && !hasReleaseSigning && allowDebugReleaseSigning) {
+    logger.warn('PERINGATAN: APK release ditandatangani dengan debug key dan hanya boleh digunakan untuk pengujian lokal.')
+}
+
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
 if (flutterVersionCode == null) {
     flutterVersionCode = '1'
@@ -38,16 +66,22 @@ android {
 
     compileOptions {
         coreLibraryDesugaringEnabled true
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     signingConfigs {
-        release {
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
-            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-            storePassword keystoreProperties['storePassword']
+        if (hasReleaseSigning) {
+            release {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile releaseStoreFile
+                storePassword keystoreProperties['storePassword']
+            }
         }
     }
 
@@ -65,7 +99,8 @@ android {
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

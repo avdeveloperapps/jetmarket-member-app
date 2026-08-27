@@ -22,7 +22,7 @@ class LoanV2Controller extends GetxController {
   final ImagePicker _picker = ImagePicker();
   final _mobileFaceNet = LoanMobileFaceNetService();
   final eligibility = <String, dynamic>{}.obs;
-  final products = <dynamic>[].obs;
+  final products = <Map<String, dynamic>>[].obs;
   final applications = <dynamic>[].obs;
   final candidates = <dynamic>[].obs;
   final selectedGuarantorIds = <int>[].obs;
@@ -56,7 +56,17 @@ class LoanV2Controller extends GetxController {
       eligibility.assignAll(eligibilityResult.result ?? {});
     }
     if (productResult.status == StatusResponse.success) {
-      products.assignAll(productResult.result ?? []);
+      final uniqueProducts = <int, Map<String, dynamic>>{};
+      for (final item in List<dynamic>.from(productResult.result ?? [])) {
+        if (item is! Map) continue;
+        final product = Map<String, dynamic>.from(item);
+        final productId = _asInt(product['id']);
+        if (productId != null) {
+          product['id'] = productId;
+          uniqueProducts[productId] = product;
+        }
+      }
+      products.assignAll(uniqueProducts.values);
     }
     if (applicationsResult.status == StatusResponse.success) {
       applications.assignAll(
@@ -91,18 +101,46 @@ class LoanV2Controller extends GetxController {
   void prepareDraft([Map<String, dynamic>? existing]) {
     application.value = existing;
     if (existing == null) return;
-    selectedTenor.value = existing['tenor_months'] as int? ?? 0;
-    selectedProduct.value = products.cast<Map<String, dynamic>?>().firstWhere(
-        (item) => item?['id'] == existing['loan_product_id'],
-        orElse: () => null);
+    selectedTenor.value = _asInt(existing['tenor_months']) ?? 0;
+    final productId = _asInt(existing['loan_product_id']);
+    selectedProduct.value = productId == null
+        ? null
+        : _productById(productId);
+  }
+
+  int? get selectedProductId => _asInt(selectedProduct.value?['id']);
+
+  Map<String, dynamic>? _productById(int productId) {
+    for (final product in products) {
+      if (_asInt(product['id']) == productId) return product;
+    }
+
+    return null;
+  }
+
+  Map<String, dynamic>? chooseProductById(int productId) {
+    final product = _productById(productId);
+    if (product == null) return null;
+    chooseProduct(product);
+
+    return product;
   }
 
   void chooseProduct(Map<String, dynamic> product) {
     selectedProduct.value = product;
     final tenors = List<dynamic>.from(product['tenors'] ?? []);
-    selectedTenor.value =
-        tenors.isEmpty ? 0 : tenors.first['tenor_months'] as int;
+    final firstTenor = tenors.isEmpty || tenors.first is! Map
+        ? null
+        : _asInt((tenors.first as Map)['tenor_months']);
+    selectedTenor.value = firstTenor ?? 0;
     update();
+  }
+
+  static int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+
+    return int.tryParse(value?.toString() ?? '');
   }
 
   Future<void> pickKtp() async {
@@ -147,6 +185,8 @@ class LoanV2Controller extends GetxController {
     if (selectedProduct.value == null ||
         selectedTenor.value <= 0 ||
         ktpPath.value == null) {
+      Get.snackbar('Data pengajuan belum lengkap',
+          'Pilih produk, tenor, dan unggah foto KTP terlebih dahulu.');
       return false;
     }
     actionStatus(ActionStatus.loading);
@@ -155,6 +195,8 @@ class LoanV2Controller extends GetxController {
         await _fileRepository.uploadFile(name: 'loan-ktp', image: file.path);
     if (uploaded.status != StatusResponse.success || uploaded.result == null) {
       actionStatus(ActionStatus.failed);
+      Get.snackbar('Foto KTP gagal diunggah',
+          uploaded.message ?? 'Silakan periksa koneksi lalu coba lagi.');
       return false;
     }
     final body = {
@@ -181,6 +223,8 @@ class LoanV2Controller extends GetxController {
       await loadCandidates();
       return true;
     }
+    Get.snackbar('Pengajuan gagal disimpan',
+        response.message ?? 'Silakan periksa data pengajuan lalu coba lagi.');
     return false;
   }
 

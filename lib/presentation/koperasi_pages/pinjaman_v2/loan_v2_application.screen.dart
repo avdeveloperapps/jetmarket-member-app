@@ -105,39 +105,53 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
         Gap(10.h),
         _input(purpose, 'Tujuan Pinjaman', maxLines: 3),
         Gap(10.h),
-        Obx(() => DropdownButtonFormField<Map<String, dynamic>>(
-            key: ValueKey(controller.selectedProduct.value?['id']),
-            initialValue: controller.selectedProduct.value,
-            decoration: _decoration('Produk Pinjaman'),
-            items: controller.products.map((item) {
-              final product = Map<String, dynamic>.from(item);
-              return DropdownMenuItem(
-                  value: product,
-                  child: Text(product['name']?.toString() ?? '-',
-                      style: text12BlackRegular));
-            }).toList(),
-            onChanged: (value) {
-              if (value != null) {
-                controller.chooseProduct(value);
-                amount.text = value['min_amount'].toString();
-              }
-            })),
+        Obx(() {
+          final items = controller.products;
+          final selectedId = controller.selectedProductId;
+          final selectedValue = items.any((item) => item['id'] == selectedId)
+              ? selectedId
+              : null;
+          return DropdownButtonFormField<int>(
+              key: ValueKey(selectedValue),
+              initialValue: selectedValue,
+              decoration: _decoration('Produk Pinjaman'),
+              items: items
+                  .map((product) => DropdownMenuItem<int>(
+                      value: product['id'] as int,
+                      child: Text(product['name']?.toString() ?? '-',
+                          style: text12BlackRegular)))
+                  .toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                final product = controller.chooseProductById(value);
+                if (product != null) {
+                  amount.text = product['min_amount'].toString();
+                }
+              });
+        }),
         Gap(10.h),
         _input(amount, 'Nominal Pinjaman', keyboard: TextInputType.number),
         Gap(10.h),
         Obx(() {
-          final tenors = List<dynamic>.from(
-              controller.selectedProduct.value?['tenors'] ?? []);
+          final tenors = <int, Map<String, dynamic>>{};
+          for (final item in List<dynamic>.from(
+              controller.selectedProduct.value?['tenors'] ?? [])) {
+            if (item is! Map) continue;
+            final tenor = Map<String, dynamic>.from(item);
+            final months = _asInt(tenor['tenor_months']);
+            if (months != null) tenors[months] = tenor;
+          }
+          final selectedTenor = tenors.containsKey(controller.selectedTenor.value)
+              ? controller.selectedTenor.value
+              : null;
           return DropdownButtonFormField<int>(
-              key: ValueKey(controller.selectedTenor.value),
-              initialValue: controller.selectedTenor.value == 0
-                  ? null
-                  : controller.selectedTenor.value,
+              key: ValueKey(selectedTenor),
+              initialValue: selectedTenor,
               decoration: _decoration('Tenor'),
-              items: tenors
-                  .map((item) => DropdownMenuItem(
-                      value: item['tenor_months'] as int,
-                      child: Text('${item['tenor_months']} Bulan',
+              items: tenors.entries
+                  .map((entry) => DropdownMenuItem<int>(
+                      value: entry.key,
+                      child: Text('${entry.key} Bulan',
                           style: text12BlackRegular)))
                   .toList(),
               onChanged: (value) {
@@ -170,6 +184,13 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
               if (success && mounted) setState(() => stage = 1);
             }),
       ]);
+
+  int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+
+    return int.tryParse(value?.toString() ?? '');
+  }
 
   Widget _guarantors() =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

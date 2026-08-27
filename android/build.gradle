@@ -31,11 +31,22 @@ subprojects {
 }
 
 // Avoid build failures when dependencies add -Werror; also suppress obsolete
-// source/target option warnings from Java 8 bytecode on newer toolchains.
-subprojects {
-    tasks.withType(JavaCompile).configureEach {
-        options.compilerArgs.removeAll(["-Werror"])
-        options.compilerArgs += ["-Xlint:-options"]
+// source/target option warnings from Android dependencies on newer toolchains.
+gradle.projectsEvaluated {
+    subprojects {
+        tasks.withType(JavaCompile).configureEach {
+            options.compilerArgs.removeAll(["-Werror"])
+            options.compilerArgs += ["-Xlint:-options"]
+        }
+
+        if (plugins.hasPlugin("com.android.application") || plugins.hasPlugin("com.android.library")) {
+            def javaTarget = android.compileOptions.targetCompatibility.toString()
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                kotlinOptions {
+                    jvmTarget = javaTarget
+                }
+            }
+        }
     }
 }
 
