@@ -3,6 +3,8 @@ import '../../../utils/network/data_state.dart';
 abstract class LoanV2Repository {
   Future<DataState<Map<String, dynamic>>> eligibility();
   Future<DataState<List<dynamic>>> products();
+  Future<DataState<Map<String, dynamic>>> previewApplication(
+      int productId, int requestedAmount, int tenorMonths);
   Future<DataState<Map<String, dynamic>>> createApplication(
       Map<String, dynamic> body);
   Future<DataState<Map<String, dynamic>>> updateApplication(
@@ -22,6 +24,7 @@ abstract class LoanV2Repository {
       int applicationId);
   Future<DataState<Map<String, dynamic>>> uploadLivenessEvidence(
       int applicationId, int sessionId, String nonce, String path);
+  Future<DataState<Map<String, dynamic>>> livenessStatus(int applicationId);
   Future<DataState<Map<String, dynamic>>> uploadSignature(
       int applicationId, String documentType, String path);
   Future<DataState<Map<String, dynamic>>> signApplication(

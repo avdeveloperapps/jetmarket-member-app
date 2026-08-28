@@ -7,7 +7,8 @@ class StatusCodeResponse {
       {required Response<dynamic> response,
       bool? showLogs,
       bool? queryParams}) {
-    if (response.statusCode == 200 || response.statusCode == 201) {
+    final statusCode = response.statusCode;
+    if (statusCode != null && statusCode >= 200 && statusCode < 300) {
       CustomLogger.onResponseLogger(
           response: response, logRequest: showLogs, queryParams: queryParams);
       return StatusResponse.success;

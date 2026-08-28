@@ -36,6 +36,23 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
   }
 
   @override
+  Future<DataState<Map<String, dynamic>>> previewApplication(
+      int productId, int requestedAmount, int tenorMonths) async {
+    try {
+      final response =
+          await RemoteProvider.post(path: 'loan-applications/preview', data: {
+        'loan_product_id': productId,
+        'requested_amount': requestedAmount,
+        'tenor_months': tenorMonths
+      });
+      return _state(
+          response, Map<String, dynamic>.from(response.data['data'] ?? {}));
+    } on DioException catch (error) {
+      return CustomException<Map<String, dynamic>>().dio(error);
+    }
+  }
+
+  @override
   Future<DataState<Map<String, dynamic>>> createApplication(
           Map<String, dynamic> body) =>
       _applicationMutation('loan-applications', body, false);
@@ -93,7 +110,7 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
             'application_id': applicationId,
             'search': search,
             'page': 1,
-            'size': 100
+            'size': 20
           });
       final data = Map<String, dynamic>.from(response.data['data'] ?? {});
       return _state(response, List<dynamic>.from(data['items'] ?? []));
@@ -160,6 +177,19 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
       _upload(
           'loan-applications/$applicationId/liveness-evidence', 'video', path,
           fields: {'session_id': sessionId.toString(), 'nonce': nonce});
+
+  @override
+  Future<DataState<Map<String, dynamic>>> livenessStatus(
+      int applicationId) async {
+    try {
+      final response = await RemoteProvider.get(
+          path: 'loan-applications/$applicationId/liveness-status');
+      return _state(
+          response, Map<String, dynamic>.from(response.data['data'] ?? {}));
+    } on DioException catch (error) {
+      return CustomException<Map<String, dynamic>>().dio(error);
+    }
+  }
 
   @override
   Future<DataState<Map<String, dynamic>>> signApplication(

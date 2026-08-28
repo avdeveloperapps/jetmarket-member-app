@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -32,15 +33,21 @@ class LoanV2Controller extends GetxController {
   final selectedProduct = Rxn<Map<String, dynamic>>();
   final selectedTenor = 0.obs;
   final loading = false.obs;
+  final candidatesLoading = false.obs;
+  final previewLoading = false.obs;
   final actionStatus = ActionStatus.initalize.obs;
   final ktpPath = RxnString();
   final facePath = RxnString();
   final livenessVideoPath = RxnString();
   final livenessChallenge = Rxn<Map<String, dynamic>>();
   final livenessSubmitted = false.obs;
+  final livenessVerificationStatus = ''.obs;
   final signaturePath = RxnString();
   final signatureReceipt = Rxn<Map<String, dynamic>>();
   final faceReceipt = Rxn<Map<String, dynamic>>();
+  final loanPreview = Rxn<Map<String, dynamic>>();
+  int _candidateRequestSequence = 0;
+  int _livenessPollSequence = 0;
 
   Future<void> loadHome() async {
     loading(true);
@@ -99,16 +106,49 @@ class LoanV2Controller extends GetxController {
   }
 
   void prepareDraft([Map<String, dynamic>? existing]) {
+    _livenessPollSequence++;
+    livenessSubmitted.value = false;
+    livenessVerificationStatus.value = '';
+    livenessChallenge.value = null;
+    livenessVideoPath.value = null;
+    facePath.value = null;
+    faceReceipt.value = null;
+    signaturePath.value = null;
+    signatureReceipt.value = null;
     application.value = existing;
     if (existing == null) return;
     selectedTenor.value = _asInt(existing['tenor_months']) ?? 0;
     final productId = _asInt(existing['loan_product_id']);
-    selectedProduct.value = productId == null
-        ? null
-        : _productById(productId);
+    selectedProduct.value = productId == null ? null : _productById(productId);
   }
 
   int? get selectedProductId => _asInt(selectedProduct.value?['id']);
+
+  static const _resumableApplicationStatuses = {
+    'DRAFT',
+    'BORROWER_VERIFICATION_PENDING',
+  };
+
+  Map<String, dynamic>? get latestResumableApplication {
+    final resumable = applications
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .where((item) =>
+            _resumableApplicationStatuses.contains(item['status']?.toString()))
+        .toList();
+    resumable.sort((left, right) {
+      final leftDate = DateTime.tryParse(left['created_at']?.toString() ?? '');
+      final rightDate =
+          DateTime.tryParse(right['created_at']?.toString() ?? '');
+      if (leftDate == null && rightDate == null) {
+        return (_asInt(right['id']) ?? 0).compareTo(_asInt(left['id']) ?? 0);
+      }
+      if (leftDate == null) return 1;
+      if (rightDate == null) return -1;
+      return rightDate.compareTo(leftDate);
+    });
+    return resumable.isEmpty ? null : resumable.first;
+  }
 
   Map<String, dynamic>? _productById(int productId) {
     for (final product in products) {
@@ -149,6 +189,28 @@ class LoanV2Controller extends GetxController {
     if (image != null) ktpPath.value = image.path;
   }
 
+  Future<Map<String, dynamic>?> previewApplication(int requestedAmount) async {
+    final productId = selectedProductId;
+    if (productId == null || requestedAmount <= 0 || selectedTenor.value <= 0) {
+      Get.snackbar('Rincian belum dapat dihitung',
+          'Pilih produk, isi nominal, dan pilih tenor terlebih dahulu.');
+      return null;
+    }
+
+    previewLoading(true);
+    final response = await _repository.previewApplication(
+        productId, requestedAmount, selectedTenor.value);
+    previewLoading(false);
+    if (response.status != StatusResponse.success || response.result == null) {
+      Get.snackbar('Rincian pinjaman gagal dimuat',
+          response.message ?? 'Periksa nominal dan tenor lalu coba lagi.');
+      return null;
+    }
+
+    loanPreview.value = Map<String, dynamic>.from(response.result!);
+    return loanPreview.value;
+  }
+
   Future<void> pickFace() async {
     final image = await _picker.pickImage(
         source: ImageSource.camera,
@@ -182,13 +244,21 @@ class LoanV2Controller extends GetxController {
       required String bankName,
       required String accountNumber,
       required String accountHolder}) async {
-    if (selectedProduct.value == null ||
-        selectedTenor.value <= 0 ||
-        ktpPath.value == null) {
-      Get.snackbar('Data pengajuan belum lengkap',
-          'Pilih produk, tenor, dan unggah foto KTP terlebih dahulu.');
+    final validationMessage = _validateDraftInput(
+      purpose: purpose,
+      requestedAmount: requestedAmount,
+      bankName: bankName,
+      accountNumber: accountNumber,
+      accountHolder: accountHolder,
+    );
+    if (validationMessage != null) {
+      Get.snackbar('Data pengajuan belum lengkap', validationMessage);
       return false;
     }
+    // A draft is resumed only when the member explicitly taps the resume
+    // action. Starting from Ajukan Pinjaman must never inherit another
+    // application's guarantors, verification, or signature state.
+    final current = application.value;
     actionStatus(ActionStatus.loading);
     final file = File(ktpPath.value!);
     final uploaded =
@@ -210,7 +280,6 @@ class LoanV2Controller extends GetxController {
       'ktp_image_object_key': uploaded.result,
       'ktp_image_sha256': sha256.convert(await file.readAsBytes()).toString(),
     };
-    final current = application.value;
     if (current != null) body['row_version'] = current['row_version'];
     final response = current == null
         ? await _repository.createApplication(body)
@@ -228,16 +297,51 @@ class LoanV2Controller extends GetxController {
     return false;
   }
 
+  String? _validateDraftInput({
+    required String purpose,
+    required int requestedAmount,
+    required String bankName,
+    required String accountNumber,
+    required String accountHolder,
+  }) {
+    final product = selectedProduct.value;
+    if (purpose.trim().length < 3) {
+      return 'Tujuan pinjaman minimal 3 karakter.';
+    }
+    if (product == null) return 'Produk pinjaman wajib dipilih.';
+    if (selectedTenor.value <= 0) return 'Tenor pinjaman wajib dipilih.';
+
+    final minimum = _asInt(product['min_amount']) ?? 0;
+    final maximum = _asInt(product['max_amount']) ?? 0;
+    if (requestedAmount < minimum || requestedAmount > maximum) {
+      return 'Nominal harus berada pada batas produk yang dipilih.';
+    }
+    if (bankName.trim().isEmpty ||
+        accountNumber.trim().isEmpty ||
+        accountHolder.trim().isEmpty) {
+      return 'Nama bank dan data rekening pencairan wajib lengkap.';
+    }
+    if (!RegExp(r'^\d+$').hasMatch(accountNumber.trim())) {
+      return 'Nomor rekening hanya boleh berisi angka.';
+    }
+    if (ktpPath.value?.trim().isEmpty ?? true) {
+      return 'Foto KTP wajib diambil terlebih dahulu.';
+    }
+    return null;
+  }
+
   Future<void> loadCandidates([String search = '']) async {
     final current = application.value;
     if (current == null) return;
-    loading(true);
+    final requestSequence = ++_candidateRequestSequence;
+    candidatesLoading(true);
     final response =
         await _repository.guarantorCandidates(current['id'], search: search);
+    if (requestSequence != _candidateRequestSequence) return;
     if (response.status == StatusResponse.success) {
       candidates.assignAll(response.result ?? []);
     }
-    loading(false);
+    candidatesLoading(false);
   }
 
   Future<bool> saveGuarantors() async {
@@ -258,24 +362,133 @@ class LoanV2Controller extends GetxController {
   Future<bool> submitLivenessEvidence() async {
     final current = application.value;
     final challenge = livenessChallenge.value;
-    if (current == null ||
-        challenge == null ||
+    final applicationId = _asInt(current?['id']);
+    final sessionId = _asInt(challenge?['session_id']);
+    final nonce = challenge?['nonce']?.toString();
+    if (applicationId == null ||
+        sessionId == null ||
+        nonce == null ||
+        nonce.isEmpty ||
         livenessVideoPath.value == null) {
       return false;
     }
     actionStatus(ActionStatus.loading);
     final response = await _repository.uploadLivenessEvidence(
-        current['id'],
-        challenge['session_id'] as int,
-        challenge['nonce'] as String,
-        livenessVideoPath.value!);
+        applicationId, sessionId, nonce, livenessVideoPath.value!);
     actionStatus(response.status == StatusResponse.success
         ? ActionStatus.success
         : ActionStatus.failed);
     if (response.status == StatusResponse.success) {
       livenessSubmitted.value = true;
+      livenessVerificationStatus.value = 'PENDING';
+      unawaited(_pollLivenessStatus(applicationId));
     }
     return response.status == StatusResponse.success;
+  }
+
+  Future<void> _pollLivenessStatus(int applicationId) async {
+    final sequence = ++_livenessPollSequence;
+    var consecutiveFailures = 0;
+    for (var attempt = 0; attempt < 150; attempt++) {
+      if (sequence != _livenessPollSequence) return;
+      final response = await _repository.livenessStatus(applicationId);
+      if (response.status == StatusResponse.success &&
+          response.result != null) {
+        consecutiveFailures = 0;
+        final result = Map<String, dynamic>.from(response.result!);
+        final status = result['status']?.toString() ?? 'PENDING';
+        _applyLivenessStatus(result);
+        if (status == 'VERIFIED') return;
+        if (status == 'FAILED') {
+          Get.snackbar('Active liveness belum berhasil',
+              'Wajah atau gerakan belum dapat diverifikasi. Silakan rekam ulang dengan pencahayaan yang lebih baik.');
+          return;
+        }
+      } else {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 5) {
+          livenessVerificationStatus.value = 'STATUS_CHECK_FAILED';
+          return;
+        }
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+  }
+
+  Future<void> retryLivenessStatus() async {
+    final applicationId = _asInt(application.value?['id']);
+    if (applicationId == null) return;
+    livenessVerificationStatus.value = 'PENDING';
+    await _pollLivenessStatus(applicationId);
+  }
+
+  Future<void> restoreLivenessStatus() async {
+    final applicationId = _asInt(application.value?['id']);
+    if (applicationId == null) return;
+    final response = await _repository.livenessStatus(applicationId);
+    if (response.status != StatusResponse.success || response.result == null) {
+      return;
+    }
+    final result = Map<String, dynamic>.from(response.result!);
+    _applyLivenessStatus(result);
+    final status = result['status']?.toString();
+    final sessionStatus = result['liveness_session_status']?.toString();
+    if (status == 'PENDING' && sessionStatus == 'SUBMITTED') {
+      unawaited(_pollLivenessStatus(applicationId));
+    }
+  }
+
+  void _applyLivenessStatus(Map<String, dynamic> result) {
+    final status = result['status']?.toString() ?? '';
+    final sessionStatus = result['liveness_session_status']?.toString() ?? '';
+    livenessVerificationStatus.value = status;
+    livenessSubmitted.value = status == 'VERIFIED' ||
+        (status == 'PENDING' && sessionStatus == 'SUBMITTED');
+    if (status == 'FAILED') {
+      livenessChallenge.value = null;
+      livenessVideoPath.value = null;
+    }
+  }
+
+  bool get isLivenessVerified => livenessVerificationStatus.value == 'VERIFIED';
+
+  bool get livenessStatusCheckFailed =>
+      livenessVerificationStatus.value == 'STATUS_CHECK_FAILED';
+
+  Future<bool> prepareLivenessChallenge(String selfiePath) async {
+    final applicationId = _asInt(application.value?['id']);
+    if (applicationId == null) return false;
+    facePath.value = selfiePath;
+
+    final statusResponse = await _repository.livenessStatus(applicationId);
+    if (statusResponse.status == StatusResponse.success &&
+        statusResponse.result != null) {
+      final status = statusResponse.result?['status']?.toString();
+      final sessionStatus =
+          statusResponse.result?['liveness_session_status']?.toString();
+      if (status == 'VERIFIED') {
+        _applyLivenessStatus(Map<String, dynamic>.from(statusResponse.result!));
+        return false;
+      }
+      if (status == 'PENDING' && sessionStatus == 'SUBMITTED') {
+        _applyLivenessStatus(Map<String, dynamic>.from(statusResponse.result!));
+        unawaited(_pollLivenessStatus(applicationId));
+        return false;
+      }
+      if (status == 'PENDING') {
+        actionStatus(ActionStatus.loading);
+        final challenge =
+            await _repository.createLivenessChallenge(applicationId);
+        actionStatus(challenge.status == StatusResponse.success
+            ? ActionStatus.success
+            : ActionStatus.failed);
+        if (challenge.status != StatusResponse.success) return false;
+        livenessChallenge.value =
+            Map<String, dynamic>.from(challenge.result ?? {});
+        return true;
+      }
+    }
+    return submitFaceVerification();
   }
 
   Future<bool> submitFaceVerification() async {
@@ -320,10 +533,18 @@ class LoanV2Controller extends GetxController {
       },
       'consent_accepted': true,
     });
-    if (response.status != StatusResponse.success) {
+    final pendingAttemptExists = response.message
+            ?.toLowerCase()
+            .contains('verifikasi peminjam sebelumnya masih diproses') ==
+        true;
+    if (response.status != StatusResponse.success && !pendingAttemptExists) {
       actionStatus(ActionStatus.failed);
       return false;
     }
+    // A PENDING verification can already exist when the app was closed after
+    // creating a challenge. In that case the backend rotates the unfinished
+    // challenge and lets this device resume without creating another identity
+    // verification attempt.
     final challenge = await _repository.createLivenessChallenge(current['id']);
     if (challenge.status != StatusResponse.success) {
       actionStatus(ActionStatus.failed);
