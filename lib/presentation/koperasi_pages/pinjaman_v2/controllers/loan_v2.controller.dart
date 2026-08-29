@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
 
@@ -9,7 +10,6 @@ import 'package:get_storage/get_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:jetmarket/domain/core/interfaces/file_repository.dart';
 import 'package:jetmarket/domain/core/interfaces/loan_v2_repository.dart';
-import 'package:jetmarket/infrastructure/navigation/routes.dart';
 import 'package:jetmarket/utils/network/action_status.dart';
 import 'package:jetmarket/utils/network/status_response.dart';
 import 'package:jetmarket/utils/services/loan_mobilefacenet.service.dart';
@@ -33,6 +33,7 @@ class LoanV2Controller extends GetxController {
   final selectedProduct = Rxn<Map<String, dynamic>>();
   final selectedTenor = 0.obs;
   final loading = false.obs;
+  final homeLoadError = RxnString();
   final candidatesLoading = false.obs;
   final previewLoading = false.obs;
   final actionStatus = ActionStatus.initalize.obs;
@@ -51,20 +52,35 @@ class LoanV2Controller extends GetxController {
 
   Future<void> loadHome() async {
     loading(true);
-    final results = await Future.wait([
-      _repository.eligibility(),
-      _repository.products(),
-      _repository.applications()
-    ]);
-    final eligibilityResult = results[0] as dynamic;
-    final productResult = results[1] as dynamic;
-    final applicationsResult = results[2] as dynamic;
-    if (eligibilityResult.status == StatusResponse.success) {
-      eligibility.assignAll(eligibilityResult.result ?? {});
-    }
-    if (productResult.status == StatusResponse.success) {
+    homeLoadError.value = null;
+    try {
+      final results = await Future.wait([
+        _repository.eligibility(),
+        _repository.products(),
+        _repository.applications()
+      ]);
+      final eligibilityResult = results[0] as dynamic;
+      final productResult = results[1] as dynamic;
+      final applicationsResult = results[2] as dynamic;
+      if (eligibilityResult.status != StatusResponse.success ||
+          productResult.status != StatusResponse.success ||
+          applicationsResult.status != StatusResponse.success) {
+        homeLoadError.value = eligibilityResult.message?.toString() ??
+            productResult.message?.toString() ??
+            applicationsResult.message?.toString() ??
+            'Data pinjaman belum dapat dimuat.';
+        return;
+      }
+
+      eligibility.assignAll(Map<String, dynamic>.from(
+          eligibilityResult.result is Map
+              ? eligibilityResult.result as Map
+              : const {}));
       final uniqueProducts = <int, Map<String, dynamic>>{};
-      for (final item in List<dynamic>.from(productResult.result ?? [])) {
+      final productItems = productResult.result is List
+          ? List<dynamic>.from(productResult.result as List)
+          : const <dynamic>[];
+      for (final item in productItems) {
         if (item is! Map) continue;
         final product = Map<String, dynamic>.from(item);
         final productId = _asInt(product['id']);
@@ -74,35 +90,48 @@ class LoanV2Controller extends GetxController {
         }
       }
       products.assignAll(uniqueProducts.values);
+      final applicationResult = applicationsResult.result;
+      final applicationItems =
+          applicationResult is Map && applicationResult['items'] is List
+              ? List<dynamic>.from(applicationResult['items'] as List)
+              : const <dynamic>[];
+      applications.assignAll(applicationItems);
+    } catch (error, stackTrace) {
+      developer.log('Failed to load loan home',
+          name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
+      homeLoadError.value = 'Data pinjaman belum dapat dimuat.';
+    } finally {
+      loading(false);
     }
-    if (applicationsResult.status == StatusResponse.success) {
-      applications.assignAll(
-          (applicationsResult.result?['items'] ?? []) as List<dynamic>);
-    }
-    loading(false);
   }
 
   Future<void> loadDetail(int id) async {
     loading(true);
-    final results = await Future.wait([
-      _repository.application(id),
-      _repository.timeline(id),
-      _repository.installments(id)
-    ]);
-    final applicationResult = results[0] as dynamic;
-    final timelineResult = results[1] as dynamic;
-    final installmentResult = results[2] as dynamic;
-    if (applicationResult.status == StatusResponse.success) {
-      application.value =
-          Map<String, dynamic>.from(applicationResult.result ?? {});
+    try {
+      final results = await Future.wait([
+        _repository.application(id),
+        _repository.timeline(id),
+        _repository.installments(id)
+      ]);
+      final applicationResult = results[0] as dynamic;
+      final timelineResult = results[1] as dynamic;
+      final installmentResult = results[2] as dynamic;
+      if (applicationResult.status == StatusResponse.success) {
+        application.value =
+            Map<String, dynamic>.from(applicationResult.result ?? {});
+      }
+      if (timelineResult.status == StatusResponse.success) {
+        timeline.assignAll(timelineResult.result ?? []);
+      }
+      if (installmentResult.status == StatusResponse.success) {
+        installments.assignAll(installmentResult.result ?? []);
+      }
+    } catch (error, stackTrace) {
+      developer.log('Failed to load loan detail',
+          name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
+    } finally {
+      loading(false);
     }
-    if (timelineResult.status == StatusResponse.success) {
-      timeline.assignAll(timelineResult.result ?? []);
-    }
-    if (installmentResult.status == StatusResponse.success) {
-      installments.assignAll(installmentResult.result ?? []);
-    }
-    loading(false);
   }
 
   void prepareDraft([Map<String, dynamic>? existing]) {
@@ -198,17 +227,27 @@ class LoanV2Controller extends GetxController {
     }
 
     previewLoading(true);
-    final response = await _repository.previewApplication(
-        productId, requestedAmount, selectedTenor.value);
-    previewLoading(false);
-    if (response.status != StatusResponse.success || response.result == null) {
-      Get.snackbar('Rincian pinjaman gagal dimuat',
-          response.message ?? 'Periksa nominal dan tenor lalu coba lagi.');
-      return null;
-    }
+    try {
+      final response = await _repository.previewApplication(
+          productId, requestedAmount, selectedTenor.value);
+      if (response.status != StatusResponse.success ||
+          response.result == null) {
+        Get.snackbar('Rincian pinjaman gagal dimuat',
+            response.message ?? 'Periksa nominal dan tenor lalu coba lagi.');
+        return null;
+      }
 
-    loanPreview.value = Map<String, dynamic>.from(response.result!);
-    return loanPreview.value;
+      loanPreview.value = Map<String, dynamic>.from(response.result!);
+      return loanPreview.value;
+    } catch (error, stackTrace) {
+      developer.log('Failed to preview loan application',
+          name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
+      Get.snackbar(
+          'Rincian pinjaman gagal dimuat', 'Periksa koneksi lalu coba lagi.');
+      return null;
+    } finally {
+      previewLoading(false);
+    }
   }
 
   Future<void> pickFace() async {
@@ -223,19 +262,6 @@ class LoanV2Controller extends GetxController {
     final image =
         await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
     if (image != null) signaturePath.value = image.path;
-  }
-
-  Future<void> pickLivenessVideo() async {
-    if (livenessChallenge.value == null) {
-      Get.snackbar(
-          'Active liveness', 'Buat tantangan active liveness terlebih dahulu.');
-      return;
-    }
-    final video = await _picker.pickVideo(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.front,
-        maxDuration: const Duration(seconds: 25));
-    if (video != null) livenessVideoPath.value = video.path;
   }
 
   Future<bool> saveDraft(
@@ -335,13 +361,21 @@ class LoanV2Controller extends GetxController {
     if (current == null) return;
     final requestSequence = ++_candidateRequestSequence;
     candidatesLoading(true);
-    final response =
-        await _repository.guarantorCandidates(current['id'], search: search);
-    if (requestSequence != _candidateRequestSequence) return;
-    if (response.status == StatusResponse.success) {
-      candidates.assignAll(response.result ?? []);
+    try {
+      final response =
+          await _repository.guarantorCandidates(current['id'], search: search);
+      if (requestSequence != _candidateRequestSequence) return;
+      if (response.status == StatusResponse.success) {
+        candidates.assignAll(response.result ?? []);
+      }
+    } catch (error, stackTrace) {
+      developer.log('Failed to load guarantor candidates',
+          name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
+    } finally {
+      if (requestSequence == _candidateRequestSequence) {
+        candidatesLoading(false);
+      }
     }
-    candidatesLoading(false);
   }
 
   Future<bool> saveGuarantors() async {
@@ -559,53 +593,71 @@ class LoanV2Controller extends GetxController {
     final current = application.value;
     if (current == null || signaturePath.value == null) return false;
     actionStatus(ActionStatus.loading);
-    final upload = await _repository.uploadSignature(
-        current['id'], documentType, signaturePath.value!);
-    if (upload.status != StatusResponse.success) {
-      actionStatus(ActionStatus.failed);
-      return false;
-    }
-    signatureReceipt.value = Map<String, dynamic>.from(upload.result ?? {});
-    final receipt = signatureReceipt.value!;
-    final body = {
-      'signature_image_object_key': receipt['signature_image_object_key'],
-      'signature_image_sha256': receipt['signature_image_sha256'],
-      'device_fingerprint_hash': await _deviceFingerprint(),
-      'client_signed_at': DateTime.now().toUtc().toIso8601String(),
-      'consent_accepted': true,
-      'idempotency_key': _idempotencyKey(),
-    };
-    final response = documentType == 'APPLICATION'
-        ? await _repository.signApplication(current['id'], body)
-        : await _repository.signFinalAgreement(current['id'], body);
-    if (response.status != StatusResponse.success) {
-      actionStatus(ActionStatus.failed);
-      return false;
-    }
-    if (documentType == 'APPLICATION') {
-      final latest = await _repository.application(current['id']);
-      if (latest.status != StatusResponse.success) {
+    try {
+      final upload = await _repository.uploadSignature(
+          current['id'], documentType, signaturePath.value!);
+      if (upload.status != StatusResponse.success) {
         actionStatus(ActionStatus.failed);
         return false;
       }
-      application.value = Map<String, dynamic>.from(latest.result ?? {});
-      final submitted = await _repository.submit(
-          current['id'], application.value!['row_version'] as int);
-      actionStatus(submitted.status == StatusResponse.success
-          ? ActionStatus.success
-          : ActionStatus.failed);
-      return submitted.status == StatusResponse.success;
+      signatureReceipt.value = Map<String, dynamic>.from(upload.result ?? {});
+      final receipt = signatureReceipt.value!;
+      final body = {
+        'signature_image_object_key': receipt['signature_image_object_key'],
+        'signature_image_sha256': receipt['signature_image_sha256'],
+        'device_fingerprint_hash': await _deviceFingerprint(),
+        'client_signed_at': DateTime.now().toUtc().toIso8601String(),
+        'consent_accepted': true,
+        'idempotency_key': _idempotencyKey(),
+      };
+      final response = documentType == 'APPLICATION'
+          ? await _repository.signApplication(current['id'], body)
+          : await _repository.signFinalAgreement(current['id'], body);
+      if (response.status != StatusResponse.success) {
+        actionStatus(ActionStatus.failed);
+        return false;
+      }
+      if (documentType == 'APPLICATION') {
+        final latest = await _repository.application(current['id']);
+        if (latest.status != StatusResponse.success) {
+          actionStatus(ActionStatus.failed);
+          return false;
+        }
+        application.value = Map<String, dynamic>.from(latest.result ?? {});
+        final rowVersion = _asInt(application.value!['row_version']);
+        if (rowVersion == null) {
+          actionStatus(ActionStatus.failed);
+          return false;
+        }
+        final submitted = await _repository.submit(current['id'], rowVersion);
+        actionStatus(submitted.status == StatusResponse.success
+            ? ActionStatus.success
+            : ActionStatus.failed);
+        return submitted.status == StatusResponse.success;
+      }
+      actionStatus(ActionStatus.success);
+      return true;
+    } catch (error, stackTrace) {
+      developer.log('Failed to sign or submit loan application',
+          name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
+      actionStatus(ActionStatus.failed);
+      Get.snackbar('Pengajuan belum berhasil dikirim',
+          'Terjadi kendala pada aplikasi. Silakan coba lagi.');
+      return false;
     }
-    actionStatus(ActionStatus.success);
-    return true;
   }
 
   Future<void> cancel() async {
     final current = application.value;
     if (current == null) return;
-    await _repository.cancel(
+    final response = await _repository.cancel(
         current['id'], 'Dibatalkan oleh peminjam melalui Member App');
-    Get.offAllNamed(Routes.LOAN_V2);
+    if (response.status == StatusResponse.success) {
+      Get.back(result: true);
+      return;
+    }
+    Get.snackbar(
+        'Pengajuan belum dibatalkan', response.message ?? 'Silakan coba lagi.');
   }
 
   Future<String> _deviceFingerprint() async {
@@ -614,7 +666,7 @@ class LoanV2Controller extends GetxController {
     if (installationId == null) {
       installationId =
           '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
-      box.write('loan_v2_installation_id', installationId);
+      await box.write('loan_v2_installation_id', installationId);
     }
     final package = await PackageInfo.fromPlatform();
     return sha256

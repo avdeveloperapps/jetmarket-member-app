@@ -4,10 +4,13 @@ import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:flutter/services.dart';
 import 'package:gap/gap.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:jetmarket/infrastructure/theme/app_colors.dart';
 import 'package:jetmarket/infrastructure/theme/app_text.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/controllers/loan_v2.controller.dart';
+import 'package:jetmarket/utils/services/loan_liveness_action_detector.dart';
 
 class LoanActiveLivenessCaptureScreen extends StatefulWidget {
   const LoanActiveLivenessCaptureScreen({
@@ -26,18 +29,29 @@ class _LoanActiveLivenessCaptureScreenState
     extends State<LoanActiveLivenessCaptureScreen>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _camera;
+  CameraDescription? _cameraDescription;
   late final AnimationController _guideAnimation;
+  late final FaceDetector _faceDetector;
+  final LoanLivenessActionDetector _actionDetector =
+      LoanLivenessActionDetector();
   List<dynamic> _actions = const [];
   int _actionIndex = -1;
   int _countdown = 0;
   bool _initializing = true;
   bool _capturing = false;
   bool _aborted = false;
+  bool _recentering = false;
+  bool _processingFrame = false;
+  bool _faceDetectorClosed = false;
+  int _completedActions = 0;
+  int _detectionEpoch = 0;
+  _DetectionPhase _detectionPhase = _DetectionPhase.idle;
+  Completer<void>? _detectionWaiter;
   String? _error;
 
   bool get _cameraReady => _camera?.value.isInitialized == true;
   bool get _showingAction =>
-      _actionIndex >= 0 && _actionIndex < _actions.length;
+      !_recentering && _actionIndex >= 0 && _actionIndex < _actions.length;
 
   @override
   void initState() {
@@ -46,6 +60,14 @@ class _LoanActiveLivenessCaptureScreenState
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
+    _faceDetector = FaceDetector(
+      options: FaceDetectorOptions(
+        enableClassification: true,
+        enableTracking: true,
+        performanceMode: FaceDetectorMode.accurate,
+        minFaceSize: .18,
+      ),
+    );
     WidgetsBinding.instance.addObserver(this);
     unawaited(_initializeCamera());
   }
@@ -55,6 +77,8 @@ class _LoanActiveLivenessCaptureScreenState
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       _aborted = true;
+      _endDetectionPhase(const _CaptureFlowException(
+          'Verifikasi wajah terhenti saat aplikasi dijeda.'));
       unawaited(_disposeCamera());
       return;
     }
@@ -85,8 +109,11 @@ class _LoanActiveLivenessCaptureScreenState
         selected,
         ResolutionPreset.medium,
         enableAudio: false,
+        fps: 15,
+        imageFormatGroup: ImageFormatGroup.nv21,
       );
       await camera.initialize();
+      await camera.lockCaptureOrientation(DeviceOrientation.portraitUp);
       if (!mounted || _aborted) {
         await camera.dispose();
         return;
@@ -94,6 +121,7 @@ class _LoanActiveLivenessCaptureScreenState
       await _camera?.dispose();
       setState(() {
         _camera = camera;
+        _cameraDescription = selected;
         _initializing = false;
       });
     } on CameraException catch (exception) {
@@ -113,7 +141,10 @@ class _LoanActiveLivenessCaptureScreenState
       _error = null;
       _countdown = 0;
       _actionIndex = -1;
+      _recentering = false;
+      _completedActions = 0;
     });
+    _actionDetector.reset();
 
     try {
       var challenge = widget.controller.livenessChallenge.value;
@@ -151,19 +182,48 @@ class _LoanActiveLivenessCaptureScreenState
         _countdown = 0;
         _actionIndex = -2;
       });
-      await camera.startVideoRecording();
-      await Future<void>.delayed(const Duration(milliseconds: 1800));
+      final baselineWaiter = _beginDetectionPhase(_DetectionPhase.baseline);
+      await camera.startVideoRecording(onAvailable: _processCameraImage);
+      await _waitForDetection(
+        baselineWaiter,
+        const Duration(seconds: 5),
+        'Wajah belum terbaca dengan stabil. Hadap lurus ke kamera dan coba lagi.',
+      );
 
       for (var index = 0; index < actions.length; index++) {
         if (_aborted || !mounted) return;
-        setState(() => _actionIndex = index);
         final action = actions[index].toString();
-        await Future<void>.delayed(
-            Duration(milliseconds: action == 'BLINK' ? 3200 : 2800));
+        _actionDetector.expect(action);
+        final actionWaiter = _beginDetectionPhase(_DetectionPhase.action);
+        setState(() {
+          _recentering = false;
+          _actionIndex = index;
+        });
+        await _waitForDetection(
+          actionWaiter,
+          Duration(seconds: action == 'BLINK' ? 7 : 6),
+          '${_livenessLabel(action)} belum terdeteksi. Silakan coba rekam ulang.',
+        );
+        if (_aborted || !mounted) return;
+        setState(() => _completedActions = index + 1);
+        if (index < actions.length - 1) {
+          final centerWaiter = _beginDetectionPhase(_DetectionPhase.recenter);
+          setState(() => _recentering = true);
+          await _waitForDetection(
+            centerWaiter,
+            const Duration(seconds: 4),
+            'Wajah belum kembali ke tengah. Silakan coba rekam ulang.',
+            failOnTimeout: false,
+          );
+        }
       }
       if (_aborted || !mounted) return;
-      setState(() => _actionIndex = actions.length);
+      setState(() {
+        _recentering = false;
+        _actionIndex = actions.length;
+      });
       await Future<void>.delayed(const Duration(milliseconds: 700));
+      _endDetectionPhase();
       final video = await camera.stopVideoRecording();
       if (!mounted) return;
       Navigator.of(context).pop(video.path);
@@ -178,11 +238,14 @@ class _LoanActiveLivenessCaptureScreenState
       _setError(
           'Active liveness gagal direkam. Pastikan wajah terlihat jelas lalu coba lagi.');
     } finally {
+      _endDetectionPhase();
       if (mounted) {
         setState(() {
           _capturing = false;
           _countdown = 0;
           _actionIndex = -1;
+          _recentering = false;
+          _completedActions = 0;
         });
       }
     }
@@ -202,6 +265,8 @@ class _LoanActiveLivenessCaptureScreenState
 
   Future<void> _cancel() async {
     _aborted = true;
+    _endDetectionPhase(
+        const _CaptureFlowException('Verifikasi wajah dibatalkan.'));
     await _stopRecordingIfNeeded();
     if (mounted) Navigator.of(context).pop();
   }
@@ -220,6 +285,7 @@ class _LoanActiveLivenessCaptureScreenState
   Future<void> _disposeCamera() async {
     final camera = _camera;
     _camera = null;
+    _cameraDescription = null;
     await _shutdownCamera(camera);
     if (mounted) setState(() {});
   }
@@ -244,6 +310,8 @@ class _LoanActiveLivenessCaptureScreenState
       _capturing = false;
       _countdown = 0;
       _actionIndex = -1;
+      _recentering = false;
+      _completedActions = 0;
     });
   }
 
@@ -257,14 +325,145 @@ class _LoanActiveLivenessCaptureScreenState
             'Kamera tidak dapat digunakan. Silakan coba lagi.',
       };
 
+  Completer<void> _beginDetectionPhase(_DetectionPhase phase) {
+    _detectionEpoch++;
+    _detectionPhase = phase;
+    final waiter = Completer<void>();
+    _detectionWaiter = waiter;
+    return waiter;
+  }
+
+  Future<void> _waitForDetection(
+    Completer<void> waiter,
+    Duration timeout,
+    String timeoutMessage, {
+    bool failOnTimeout = true,
+  }) async {
+    try {
+      await waiter.future.timeout(timeout);
+    } on TimeoutException {
+      if (failOnTimeout) throw _CaptureFlowException(timeoutMessage);
+    } finally {
+      if (identical(_detectionWaiter, waiter)) _detectionWaiter = null;
+    }
+  }
+
+  void _endDetectionPhase([Object? error]) {
+    _detectionEpoch++;
+    _detectionPhase = _DetectionPhase.idle;
+    final waiter = _detectionWaiter;
+    _detectionWaiter = null;
+    if (waiter == null || waiter.isCompleted) return;
+    if (error == null) {
+      waiter.complete();
+    } else {
+      waiter.completeError(error, StackTrace.current);
+    }
+  }
+
+  Future<void> _processCameraImage(CameraImage image) async {
+    if (_processingFrame || !_capturing || _faceDetectorClosed) {
+      return;
+    }
+    final epoch = _detectionEpoch;
+    _processingFrame = true;
+    try {
+      if (_detectionPhase == _DetectionPhase.idle ||
+          !mounted ||
+          epoch != _detectionEpoch) {
+        return;
+      }
+      final inputImage = _inputImageFromCameraImage(image);
+      if (inputImage == null) return;
+      final faces = await _faceDetector.processImage(inputImage);
+      if (!mounted || epoch != _detectionEpoch) return;
+      if (faces.length != 1) {
+        _actionDetector.miss();
+        return;
+      }
+      final face = faces.single;
+      final yaw = face.headEulerAngleY;
+      final pitch = face.headEulerAngleX;
+      if (yaw == null ||
+          pitch == null ||
+          face.boundingBox.width < image.width * .18) {
+        _actionDetector.miss();
+        return;
+      }
+      final signal = LivenessFaceSignal(
+        yaw: yaw,
+        pitch: pitch,
+        leftEyeOpenProbability: face.leftEyeOpenProbability,
+        rightEyeOpenProbability: face.rightEyeOpenProbability,
+      );
+      final detected = switch (_detectionPhase) {
+        _DetectionPhase.baseline => _actionDetector.addBaselineSample(signal),
+        _DetectionPhase.action => _actionDetector.consumeExpected(signal),
+        _DetectionPhase.recenter => _actionDetector.consumeCentered(signal),
+        _DetectionPhase.idle => false,
+      };
+      if (detected && _detectionWaiter?.isCompleted == false) {
+        _detectionWaiter!.complete();
+      }
+    } catch (_) {
+      if (epoch == _detectionEpoch) {
+        _endDetectionPhase(const _CaptureFlowException(
+            'Deteksi wajah tidak dapat dijalankan pada perangkat ini.'));
+      }
+    } finally {
+      _processingFrame = false;
+    }
+  }
+
+  InputImage? _inputImageFromCameraImage(CameraImage image) {
+    final camera = _cameraDescription;
+    final controller = _camera;
+    if (camera == null || controller == null || image.planes.length != 1) {
+      return null;
+    }
+    const orientations = <DeviceOrientation, int>{
+      DeviceOrientation.portraitUp: 0,
+      DeviceOrientation.landscapeLeft: 90,
+      DeviceOrientation.portraitDown: 180,
+      DeviceOrientation.landscapeRight: 270,
+    };
+    final captureOrientation = controller.value.lockedCaptureOrientation ??
+        controller.value.deviceOrientation;
+    final deviceRotation = orientations[captureOrientation];
+    if (deviceRotation == null) return null;
+    final rotationCompensation =
+        camera.lensDirection == CameraLensDirection.front
+            ? (camera.sensorOrientation + deviceRotation) % 360
+            : (camera.sensorOrientation - deviceRotation + 360) % 360;
+    final rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
+    final format = InputImageFormatValue.fromRawValue(image.format.raw);
+    if (rotation == null || format == null) return null;
+    if (format != InputImageFormat.nv21) return null;
+    final plane = image.planes.single;
+    return InputImage.fromBytes(
+      bytes: plane.bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: rotation,
+        format: format,
+        bytesPerRow: plane.bytesPerRow,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _aborted = true;
+    _endDetectionPhase(
+        const _CaptureFlowException('Verifikasi wajah dihentikan.'));
     _guideAnimation.dispose();
     WidgetsBinding.instance.removeObserver(this);
     final camera = _camera;
     _camera = null;
+    _cameraDescription = null;
     unawaited(_shutdownCamera(camera));
+    _faceDetectorClosed = true;
+    unawaited(_faceDetector.close());
     super.dispose();
   }
 
@@ -313,7 +512,6 @@ class _LoanActiveLivenessCaptureScreenState
                   progress: _guideProgress,
                   pulse: _guideAnimation.value,
                   isCapturing: _capturing,
-                  isReady: _cameraReady,
                 ),
                 child: Center(
                   child: Container(
@@ -339,8 +537,7 @@ class _LoanActiveLivenessCaptureScreenState
 
   double get _guideProgress {
     if (!_capturing || _actions.isEmpty) return 0;
-    if (_actionIndex < 0) return .06;
-    return ((_actionIndex + 1) / _actions.length).clamp(.06, 1.0).toDouble();
+    return (_completedActions / _actions.length).clamp(0.0, 1.0).toDouble();
   }
 
   Widget _topBar() => Align(
@@ -396,8 +593,8 @@ class _LoanActiveLivenessCaptureScreenState
                   borderRadius: BorderRadius.circular(4.r),
                   child: LinearProgressIndicator(
                       minHeight: 5.h,
-                      value: ((_actionIndex + 1) / _actions.length)
-                          .clamp(0.0, 1.0),
+                      value:
+                          (_completedActions / _actions.length).clamp(0.0, 1.0),
                       backgroundColor: Colors.white24,
                       valueColor:
                           const AlwaysStoppedAnimation<Color>(kSuccessColor))),
@@ -427,6 +624,7 @@ class _LoanActiveLivenessCaptureScreenState
 
   String _instructionTitle() {
     if (_countdown > 0) return '$_countdown';
+    if (_recentering) return 'Kembali ke tengah';
     if (_capturing && _actionIndex == -2) return 'Hadap lurus';
     if (_showingAction) return _livenessLabel(_actions[_actionIndex]);
     if (_capturing && _actionIndex >= _actions.length) return 'Tahan sebentar';
@@ -436,6 +634,9 @@ class _LoanActiveLivenessCaptureScreenState
 
   String _instructionDetail() {
     if (_countdown > 0) return 'Tetap menghadap kamera';
+    if (_recentering) {
+      return 'Hadapkan wajah lurus ke kamera sebelum instruksi berikutnya.';
+    }
     if (_capturing && _actionIndex == -2) {
       return 'Tahan wajah lurus untuk kalibrasi awal.';
     }
@@ -479,13 +680,11 @@ class _LivenessFaceGuidePainter extends CustomPainter {
     required this.progress,
     required this.pulse,
     required this.isCapturing,
-    required this.isReady,
   });
 
   final double progress;
   final double pulse;
   final bool isCapturing;
-  final bool isReady;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -496,18 +695,12 @@ class _LivenessFaceGuidePainter extends CustomPainter {
     final innerY = size.height * .397;
     const segmentCount = 54;
     final activeSegments = (segmentCount * progress).round();
-    final readyColor = isCapturing
-        ? kSuccessColor
-        : isReady
-            ? kPrimaryColor
-            : Colors.white54;
-
     for (var index = 0; index < segmentCount; index++) {
       final angle = -math.pi / 2 + (2 * math.pi * index / segmentCount);
       final isActive = index < activeSegments;
       final wave = .72 + .28 * math.sin((pulse * math.pi * 2) + index / 5);
       final color = isActive
-          ? readyColor.withValues(alpha: .82 + .18 * wave)
+          ? kSuccessColor.withValues(alpha: .82 + .18 * wave)
           : Colors.white.withValues(alpha: isCapturing ? .24 : .38);
       final lineWidth = isActive ? 3.2 : 2.4;
       final outer = Offset(center.dx + outerX * math.cos(angle),
@@ -528,7 +721,7 @@ class _LivenessFaceGuidePainter extends CustomPainter {
     canvas.drawOval(
         oval,
         Paint()
-          ..color = readyColor.withValues(alpha: isCapturing ? .24 : .14)
+          ..color = Colors.white.withValues(alpha: isCapturing ? .24 : .14)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.2);
   }
@@ -537,9 +730,10 @@ class _LivenessFaceGuidePainter extends CustomPainter {
   bool shouldRepaint(_LivenessFaceGuidePainter oldDelegate) =>
       oldDelegate.progress != progress ||
       oldDelegate.pulse != pulse ||
-      oldDelegate.isCapturing != isCapturing ||
-      oldDelegate.isReady != isReady;
+      oldDelegate.isCapturing != isCapturing;
 }
+
+enum _DetectionPhase { idle, baseline, action, recenter }
 
 class _CaptureFlowException implements Exception {
   const _CaptureFlowException(this.message);

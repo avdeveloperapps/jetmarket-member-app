@@ -92,8 +92,36 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
         body: Obx(() => controller.loading.value
             ? const Center(
                 child: CircularProgressIndicator(color: kPrimaryColor))
-            : _body()),
+            : controller.homeLoadError.value != null &&
+                    controller.products.isEmpty
+                ? _loadError(controller.homeLoadError.value!)
+                : _body()),
       );
+
+  Widget _loadError(String message) => Center(
+        child: Padding(
+          padding: AppStyle.paddingAll16,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.cloud_off_outlined, color: kSoftGrey, size: 40),
+            Gap(10.h),
+            Text(message,
+                style: text12HintRegular, textAlign: TextAlign.center),
+            Gap(14.h),
+            ElevatedButton.icon(
+              onPressed: _retryInitialLoad,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Coba Lagi'),
+            ),
+          ]),
+        ),
+      );
+
+  Future<void> _retryInitialLoad() async {
+    await controller.loadHome();
+    if (controller.homeLoadError.value == null) {
+      controller.prepareDraft(_initialApplication);
+    }
+  }
 
   Widget _body() => ListView(padding: AppStyle.paddingAll16, children: [
         _stepper(),
@@ -256,8 +284,7 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
                 : null),
         Gap(10.h),
         _input(account, 'Nomor Rekening',
-            keyboard: TextInputType.number,
-            validator: _validateAccountNumber),
+            keyboard: TextInputType.number, validator: _validateAccountNumber),
         Gap(10.h),
         _input(holder, 'Nama Pemilik Rekening',
             validator: (value) => value == null || value.trim().isEmpty
@@ -284,10 +311,11 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
                 : () async {
                     FocusScope.of(context).unfocus();
                     setState(() => _attemptedSave = true);
-                    final hasKtp = controller.ktpPath.value?.trim().isNotEmpty ==
-                        true;
+                    final hasKtp =
+                        controller.ktpPath.value?.trim().isNotEmpty == true;
                     if (!hasKtp) setState(() => _showKtpError = true);
-                    if (!(_applicationFormKey.currentState?.validate() ?? false) ||
+                    if (!(_applicationFormKey.currentState?.validate() ??
+                            false) ||
                         !hasKtp) {
                       Get.snackbar('Data pengajuan belum lengkap',
                           'Lengkapi atau perbaiki field yang ditandai sebelum melanjutkan.');
@@ -930,9 +958,27 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
                 ? null
                 : () async {
                     final success = await controller.sign('APPLICATION');
-                    if (success) Get.offAllNamed(Routes.LOAN_V2);
+                    if (success && mounted) await _openLoanHome();
                   })),
       ]);
+
+  Future<void> _openLoanHome() async {
+    // Pop before binding another loan route. Otherwise GetX can reuse the
+    // controller owned by this form and dispose it during the transition.
+    Get.back(result: true);
+    await Future<void>.delayed(Duration.zero);
+    if (Get.currentRoute == Routes.LOAN_V2) return;
+
+    if (Get.currentRoute == Routes.LOAN_V2_DETAIL) {
+      Get.back(result: true);
+      await Future<void>.delayed(Duration.zero);
+      if (Get.currentRoute == Routes.LOAN_V2) return;
+    }
+
+    // The legacy loan menu opens this form directly. Remove this route first
+    // so GetX disposes its route-scoped controller before binding loan home.
+    Get.toNamed(Routes.LOAN_V2);
+  }
 
   Future<void> _startActiveLiveness() async {
     final videoPath = await Navigator.of(context).push<String>(
@@ -956,7 +1002,8 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
           String? errorText}) =>
       InkWell(
           onTap: onTap,
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Container(
                 width: double.infinity,
                 padding: EdgeInsets.all(14.r),

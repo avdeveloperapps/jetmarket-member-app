@@ -42,6 +42,9 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
           return const Center(
               child: CircularProgressIndicator(color: kPrimaryColor));
         }
+        if (controller.homeLoadError.value != null) {
+          return _loadError(controller.homeLoadError.value!);
+        }
         final canApply = controller.eligibility['eligible'] == true;
         final reasons =
             List<dynamic>.from(controller.eligibility['reasons'] ?? []);
@@ -63,6 +66,24 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
       }),
     );
   }
+
+  Widget _loadError(String message) => Center(
+        child: Padding(
+          padding: AppStyle.paddingAll16,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.cloud_off_outlined, color: kSoftGrey, size: 40),
+            Gap(10.h),
+            Text(message,
+                style: text12HintRegular, textAlign: TextAlign.center),
+            Gap(14.h),
+            ElevatedButton.icon(
+              onPressed: controller.loadHome,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Coba Lagi'),
+            ),
+          ]),
+        ),
+      );
 
   Widget _hero(bool canApply, List<dynamic> reasons) => Container(
         padding: EdgeInsets.all(16.r),
@@ -88,7 +109,11 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8.r))),
                 onPressed: canApply
-                    ? () => Get.toNamed(Routes.LOAN_V2_APPLICATION)
+                    ? () async {
+                        final changed =
+                            await Get.toNamed(Routes.LOAN_V2_APPLICATION);
+                        if (changed == true) await controller.loadHome();
+                      }
                     : null,
                 child: Text('Ajukan Pinjaman', style: text12WhiteMedium),
               )),
@@ -112,8 +137,11 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
         padding: EdgeInsets.only(bottom: 10.h),
         child: InkWell(
           borderRadius: AppStyle.borderRadius8All,
-          onTap: () =>
-              Get.toNamed(Routes.LOAN_V2_DETAIL, arguments: item['id']),
+          onTap: () async {
+            final changed =
+                await Get.toNamed(Routes.LOAN_V2_DETAIL, arguments: item['id']);
+            if (changed == true) await controller.loadHome();
+          },
           child: Container(
             padding: EdgeInsets.all(14.r),
             decoration: BoxDecoration(

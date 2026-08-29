@@ -264,7 +264,7 @@ class FirebaseService {
     await _firebaseMessaging.requestPermission();
     final tokenFcm = await _firebaseMessaging.getToken();
     fcmToken = tokenFcm ?? '';
-    box.write('fcm_token', tokenFcm);
+    await box.write('fcm_token', tokenFcm);
     log("TOKEN : $tokenFcm");
     var androidInitialize =
         const AndroidInitializationSettings("@mipmap/ic_launcher");
