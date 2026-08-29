@@ -941,7 +941,7 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
         Gap(16.h),
         Obx(() => controller.isLivenessVerified
             ? _imagePicker(
-                label: 'Gambar TTD Dokumen Aplikasi',
+                label: 'TTD Dokumen Aplikasi',
                 path: controller.signaturePath.value,
                 onTap: controller.pickSignature)
             : Text(
