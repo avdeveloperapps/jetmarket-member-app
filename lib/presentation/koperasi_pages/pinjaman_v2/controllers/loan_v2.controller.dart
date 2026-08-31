@@ -50,6 +50,7 @@ class LoanV2Controller extends GetxController {
   final loanPreview = Rxn<Map<String, dynamic>>();
   int _candidateRequestSequence = 0;
   int _livenessPollSequence = 0;
+  bool _livenessEvidenceSubmitting = false;
 
   Future<void> loadHome() async {
     loading(true);
@@ -394,6 +395,7 @@ class LoanV2Controller extends GetxController {
   }
 
   Future<bool> submitLivenessEvidence() async {
+    if (_livenessEvidenceSubmitting) return false;
     final current = application.value;
     final challenge = livenessChallenge.value;
     final applicationId = _asInt(current?['id']);
@@ -406,18 +408,49 @@ class LoanV2Controller extends GetxController {
         livenessVideoPath.value == null) {
       return false;
     }
+    _livenessEvidenceSubmitting = true;
     actionStatus(ActionStatus.loading);
-    final response = await _repository.uploadLivenessEvidence(
-        applicationId, sessionId, nonce, livenessVideoPath.value!);
-    actionStatus(response.status == StatusResponse.success
-        ? ActionStatus.success
-        : ActionStatus.failed);
-    if (response.status == StatusResponse.success) {
-      livenessSubmitted.value = true;
-      livenessVerificationStatus.value = 'PENDING';
-      unawaited(_pollLivenessStatus(applicationId));
+    try {
+      final response = await _repository.uploadLivenessEvidence(
+          applicationId, sessionId, nonce, livenessVideoPath.value!);
+      if (response.status == StatusResponse.success) {
+        actionStatus(ActionStatus.success);
+        _markLivenessEvidenceSubmitted(applicationId);
+        return true;
+      }
+
+      final recovered = await _recoverSubmittedLiveness(applicationId);
+      actionStatus(recovered ? ActionStatus.success : ActionStatus.failed);
+      return recovered;
+    } finally {
+      _livenessEvidenceSubmitting = false;
     }
-    return response.status == StatusResponse.success;
+  }
+
+  void _markLivenessEvidenceSubmitted(int applicationId) {
+    livenessSubmitted.value = true;
+    livenessVerificationStatus.value = 'PENDING';
+    unawaited(_pollLivenessStatus(applicationId));
+  }
+
+  Future<bool> _recoverSubmittedLiveness(int applicationId) async {
+    final status = await _repository.livenessStatus(applicationId);
+    if (status.status != StatusResponse.success || status.result == null) {
+      return false;
+    }
+    final result = Map<String, dynamic>.from(status.result!);
+    _applyLivenessStatus(result);
+    final verificationStatus = result['status']?.toString();
+    final sessionStatus = result['liveness_session_status']?.toString();
+    if (verificationStatus == 'VERIFIED') {
+      return true;
+    }
+    if (verificationStatus == 'PENDING' && sessionStatus == 'SUBMITTED') {
+      livenessSubmitted.value = true;
+      unawaited(_pollLivenessStatus(applicationId));
+      return true;
+    }
+    return false;
   }
 
   Future<void> _pollLivenessStatus(int applicationId) async {
@@ -467,7 +500,14 @@ class LoanV2Controller extends GetxController {
     _applyLivenessStatus(result);
     final status = result['status']?.toString();
     final sessionStatus = result['liveness_session_status']?.toString();
-    if (status == 'PENDING' && sessionStatus == 'SUBMITTED') {
+    final sessionNotYetVisible = sessionStatus == null ||
+        sessionStatus.isEmpty ||
+        sessionStatus == 'CREATED';
+    final shouldPoll = status == 'PENDING' &&
+        (sessionStatus == 'SUBMITTED' ||
+            sessionStatus == 'VERIFIED' ||
+            (livenessSubmitted.value && sessionNotYetVisible));
+    if (shouldPoll) {
       unawaited(_pollLivenessStatus(applicationId));
     }
   }
@@ -476,8 +516,14 @@ class LoanV2Controller extends GetxController {
     final status = result['status']?.toString() ?? '';
     final sessionStatus = result['liveness_session_status']?.toString() ?? '';
     livenessVerificationStatus.value = status;
-    livenessSubmitted.value = status == 'VERIFIED' ||
-        (status == 'PENDING' && sessionStatus == 'SUBMITTED');
+    if (status == 'VERIFIED' ||
+        (status == 'PENDING' && sessionStatus == 'SUBMITTED')) {
+      livenessSubmitted.value = true;
+    } else if (status == 'FAILED') {
+      livenessSubmitted.value = false;
+    }
+    // PENDING + CREATED/null/session-VERIFIED dibiarkan: jika user sudah
+    // mengirim evidence, submitted tetap true; jika belum, tetap false.
     if (status == 'FAILED') {
       livenessChallenge.value = null;
       livenessVideoPath.value = null;

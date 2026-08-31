@@ -88,6 +88,44 @@ void main() {
         isTrue);
   });
 
+  test('detects a realistic blink relative to the calibrated eye score', () {
+    final detector = calibratedDetector()..expect('BLINK');
+
+    expect(
+        detector.consumeExpected(const LivenessFaceSignal(
+          yaw: 0,
+          pitch: 0,
+          leftEyeOpenProbability: .55,
+          rightEyeOpenProbability: .58,
+        )),
+        isFalse);
+    expect(
+        detector.consumeExpected(const LivenessFaceSignal(
+          yaw: 0,
+          pitch: 0,
+          leftEyeOpenProbability: .76,
+          rightEyeOpenProbability: .78,
+        )),
+        isTrue);
+  });
+
+  test('accepts a gentle head movement for directional prompts', () {
+    final detector = calibratedDetector()..expect('LOOK_DOWN');
+
+    expect(
+        detector.consumeExpected(const LivenessFaceSignal(yaw: 0, pitch: -6)),
+        isFalse);
+    expect(
+        detector.consumeExpected(const LivenessFaceSignal(yaw: 0, pitch: -6)),
+        isTrue);
+
+    detector.expect('TURN_LEFT');
+    expect(detector.consumeExpected(const LivenessFaceSignal(yaw: 9, pitch: 0)),
+        isFalse);
+    expect(detector.consumeExpected(const LivenessFaceSignal(yaw: 9, pitch: 0)),
+        isTrue);
+  });
+
   test('tolerates one noisy frame while confirming an action', () {
     final detector = calibratedDetector()..expect('LOOK_UP');
 

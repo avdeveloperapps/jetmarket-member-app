@@ -989,6 +989,9 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
     if (!mounted || videoPath == null) return;
     controller.livenessVideoPath.value = videoPath;
     final submitted = await controller.submitLivenessEvidence();
+    if (submitted) {
+      await controller.restoreLivenessStatus();
+    }
     if (!mounted || submitted) return;
     Get.snackbar('Active liveness gagal dikirim',
         'Rekaman tidak dapat dikirim. Periksa koneksi lalu coba kembali.');

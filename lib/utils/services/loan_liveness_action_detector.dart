@@ -15,17 +15,21 @@ class LivenessFaceSignal {
 class LoanLivenessActionDetector {
   static const _baselineSampleCount = 4;
   static const _requiredPoseHits = 2;
-  static const _yawThreshold = 15.0;
-  static const _pitchThreshold = 10.0;
+  static const _yawThreshold = 8.0;
+  static const _pitchThreshold = 5.0;
   static const _centerThreshold = 14.0;
-  static const _closedEyeThreshold = .35;
-  static const _openEyeThreshold = .65;
+  static const _closedEyeBaselineRatio = .72;
+  static const _openEyeBaselineRatio = .78;
+  static const _fallbackClosedEyeThreshold = .45;
+  static const _fallbackOpenEyeThreshold = .55;
 
   final List<double> _baselineYawSamples = [];
   final List<double> _baselinePitchSamples = [];
+  final List<double> _baselineEyeOpenSamples = [];
 
   double? _baselineYaw;
   double? _baselinePitch;
+  double? _baselineEyeOpen;
   String? _expectedAction;
   int _poseHits = 0;
   int _centerHits = 0;
@@ -38,8 +42,10 @@ class LoanLivenessActionDetector {
   void reset() {
     _baselineYawSamples.clear();
     _baselinePitchSamples.clear();
+    _baselineEyeOpenSamples.clear();
     _baselineYaw = null;
     _baselinePitch = null;
+    _baselineEyeOpen = null;
     _expectedAction = null;
     _poseHits = 0;
     _centerHits = 0;
@@ -52,9 +58,14 @@ class LoanLivenessActionDetector {
     if (signal.yaw.abs() > 20 || signal.pitch.abs() > 20) return false;
     _baselineYawSamples.add(signal.yaw);
     _baselinePitchSamples.add(signal.pitch);
+    final eyeOpen = _bothEyesOpenProbability(signal);
+    if (eyeOpen != null) _baselineEyeOpenSamples.add(eyeOpen);
     if (_baselineYawSamples.length < _baselineSampleCount) return false;
     _baselineYaw = _median(_baselineYawSamples);
     _baselinePitch = _median(_baselinePitchSamples);
+    if (_baselineEyeOpenSamples.isNotEmpty) {
+      _baselineEyeOpen = _median(_baselineEyeOpenSamples);
+    }
     return true;
   }
 
@@ -140,20 +151,31 @@ class LoanLivenessActionDetector {
   }
 
   bool _consumeBlink(LivenessFaceSignal signal) {
-    final left = signal.leftEyeOpenProbability;
-    final right = signal.rightEyeOpenProbability;
-    if (left == null || right == null) return false;
-    if (left <= _closedEyeThreshold && right <= _closedEyeThreshold) {
+    final eyeOpen = _bothEyesOpenProbability(signal);
+    if (eyeOpen == null) return false;
+    final baselineEyeOpen = _baselineEyeOpen;
+    final closedThreshold = baselineEyeOpen == null
+        ? _fallbackClosedEyeThreshold
+        : baselineEyeOpen * _closedEyeBaselineRatio;
+    final openThreshold = baselineEyeOpen == null
+        ? _fallbackOpenEyeThreshold
+        : baselineEyeOpen * _openEyeBaselineRatio;
+    if (eyeOpen <= closedThreshold) {
       _blinkClosed = true;
       return false;
     }
-    if (_blinkClosed &&
-        left >= _openEyeThreshold &&
-        right >= _openEyeThreshold) {
+    if (_blinkClosed && eyeOpen >= openThreshold) {
       _blinkClosed = false;
       return true;
     }
     return false;
+  }
+
+  double? _bothEyesOpenProbability(LivenessFaceSignal signal) {
+    final left = signal.leftEyeOpenProbability;
+    final right = signal.rightEyeOpenProbability;
+    if (left == null || right == null) return null;
+    return left < right ? left : right;
   }
 
   double _median(List<double> values) {
