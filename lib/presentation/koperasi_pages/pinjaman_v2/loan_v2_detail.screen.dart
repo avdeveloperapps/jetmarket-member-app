@@ -9,6 +9,7 @@ import 'package:jetmarket/infrastructure/theme/app_colors.dart';
 import 'package:jetmarket/infrastructure/theme/app_text.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/controllers/loan_v2.controller.dart';
 import 'package:jetmarket/utils/extension/currency.dart';
+import 'package:jetmarket/utils/loan_v2_status.dart';
 import 'package:jetmarket/utils/style/app_style.dart';
 
 class LoanV2DetailScreen extends StatefulWidget {
@@ -100,7 +101,7 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Status Pengajuan', style: text12BlackSemiBold),
           Gap(5.h),
-          Text(status.replaceAll('_', ' '), style: text14PrimarySemiBold),
+          Text(loanV2StatusLabel(status), style: text14PrimarySemiBold),
           Gap(5.h),
           Text(_statusMessage(status), style: text12HintRegular)
         ]));
@@ -112,6 +113,7 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
           ? [Text('Belum ada pembaruan status.', style: text12HintRegular)]
           : controller.timeline.map((item) {
               final value = Map<String, dynamic>.from(item);
+              final nextStatus = value['to_status']?.toString();
               return Padding(
                   padding: EdgeInsets.only(bottom: 10.h),
                   child: Row(
@@ -125,10 +127,9 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                               Text(
-                                  value['to_status']
-                                          ?.toString()
-                                          .replaceAll('_', ' ') ??
-                                      'Pembaruan',
+                                  nextStatus == null || nextStatus.isEmpty
+                                      ? 'Pembaruan'
+                                      : loanV2StatusLabel(nextStatus),
                                   style: text12BlackSemiBold),
                               Text(value['reason']?.toString() ?? '',
                                   style: text10HintRegular),

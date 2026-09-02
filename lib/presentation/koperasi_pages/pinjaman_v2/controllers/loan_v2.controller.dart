@@ -48,11 +48,13 @@ class LoanV2Controller extends GetxController {
   final signatureReceipt = Rxn<Map<String, dynamic>>();
   final faceReceipt = Rxn<Map<String, dynamic>>();
   final loanPreview = Rxn<Map<String, dynamic>>();
+  int _homeLoadSequence = 0;
   int _candidateRequestSequence = 0;
   int _livenessPollSequence = 0;
   bool _livenessEvidenceSubmitting = false;
 
   Future<void> loadHome() async {
+    final loadSequence = ++_homeLoadSequence;
     loading(true);
     homeLoadError.value = null;
     try {
@@ -60,7 +62,8 @@ class LoanV2Controller extends GetxController {
         _repository.eligibility(),
         _repository.products(),
         _repository.applications()
-      ]);
+      ]).timeout(const Duration(seconds: 15));
+      if (loadSequence != _homeLoadSequence) return;
       final eligibilityResult = results[0] as dynamic;
       final productResult = results[1] as dynamic;
       final applicationsResult = results[2] as dynamic;
@@ -99,29 +102,35 @@ class LoanV2Controller extends GetxController {
               : const <dynamic>[];
       applications.assignAll(applicationItems);
     } catch (error, stackTrace) {
+      if (loadSequence != _homeLoadSequence) return;
       developer.log('Failed to load loan home',
           name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
       homeLoadError.value = 'Data pinjaman belum dapat dimuat.';
     } finally {
-      loading(false);
+      if (loadSequence == _homeLoadSequence) loading(false);
     }
   }
 
   Future<void> loadDetail(int id) async {
     loading(true);
+    application.value = null;
+    timeline.clear();
+    installments.clear();
     try {
-      final results = await Future.wait([
-        _repository.application(id),
-        _repository.timeline(id),
-        _repository.installments(id)
-      ]);
-      final applicationResult = results[0] as dynamic;
-      final timelineResult = results[1] as dynamic;
-      final installmentResult = results[2] as dynamic;
+      // Load the application first: optional timeline/installment data must
+      // never hide a valid application detail from the member.
+      final applicationResult = await _repository.application(id);
       if (applicationResult.status == StatusResponse.success) {
         application.value =
             Map<String, dynamic>.from(applicationResult.result ?? {});
       }
+
+      final results = await Future.wait([
+        _repository.timeline(id),
+        _repository.installments(id)
+      ]);
+      final timelineResult = results[0] as dynamic;
+      final installmentResult = results[1] as dynamic;
       if (timelineResult.status == StatusResponse.success) {
         timeline.assignAll(timelineResult.result ?? []);
       }
@@ -146,7 +155,26 @@ class LoanV2Controller extends GetxController {
     faceReceipt.value = null;
     signaturePath.value = null;
     signatureReceipt.value = null;
+    ktpPath.value = null;
+    loanPreview.value = null;
     application.value = existing;
+    if (existing == null) {
+      // A new form can be opened from Home immediately after a submission.
+      // Do not carry the previous application's product selection into it.
+      selectedProduct.value = null;
+      selectedTenor.value = 0;
+      selectedGuarantorIds.clear();
+      candidates.clear();
+      return;
+    }
+    syncDraftProductSelection(existing);
+  }
+
+  // Product data is loaded asynchronously when the application screen opens.
+  // Re-applying the product/tenor selection after that load must not reset the
+  // in-progress liveness capture or stop its status polling.
+  void syncDraftProductSelection([Map<String, dynamic>? draft]) {
+    final existing = draft ?? application.value;
     if (existing == null) return;
     selectedTenor.value = _asInt(existing['tenor_months']) ?? 0;
     final productId = _asInt(existing['loan_product_id']);
@@ -434,21 +462,33 @@ class LoanV2Controller extends GetxController {
   }
 
   Future<bool> _recoverSubmittedLiveness(int applicationId) async {
-    final status = await _repository.livenessStatus(applicationId);
-    if (status.status != StatusResponse.success || status.result == null) {
-      return false;
-    }
-    final result = Map<String, dynamic>.from(status.result!);
-    _applyLivenessStatus(result);
-    final verificationStatus = result['status']?.toString();
-    final sessionStatus = result['liveness_session_status']?.toString();
-    if (verificationStatus == 'VERIFIED') {
-      return true;
-    }
-    if (verificationStatus == 'PENDING' && sessionStatus == 'SUBMITTED') {
-      livenessSubmitted.value = true;
-      unawaited(_pollLivenessStatus(applicationId));
-      return true;
+    // A client may lose the upload response while the backend is still
+    // encrypting and storing the evidence. In that case the latest session is
+    // briefly CREATED even though the original request will shortly mark it
+    // SUBMITTED. Do not let the user start another challenge during that gap.
+    for (var attempt = 0; attempt < 15; attempt++) {
+      final status = await _repository.livenessStatus(applicationId);
+      if (status.status == StatusResponse.success && status.result != null) {
+        final result = Map<String, dynamic>.from(status.result!);
+        _applyLivenessStatus(result);
+        final verificationStatus = result['status']?.toString();
+        final sessionStatus = result['liveness_session_status']?.toString();
+        if (verificationStatus == 'VERIFIED') {
+          return true;
+        }
+        if (verificationStatus == 'PENDING' && sessionStatus == 'SUBMITTED') {
+          livenessSubmitted.value = true;
+          unawaited(_pollLivenessStatus(applicationId));
+          return true;
+        }
+
+        final stillStoringEvidence = verificationStatus == 'PENDING' &&
+            (sessionStatus == null ||
+                sessionStatus.isEmpty ||
+                sessionStatus == 'CREATED');
+        if (!stillStoringEvidence) return false;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
     }
     return false;
   }

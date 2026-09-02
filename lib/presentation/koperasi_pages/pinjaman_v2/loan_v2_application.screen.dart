@@ -44,27 +44,43 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
     _initialApplication = Get.arguments is Map<String, dynamic>
         ? Get.arguments as Map<String, dynamic>
         : null;
-    controller.loadHome().then((_) async {
-      final existing = _initialApplication;
-      controller.prepareDraft(existing);
-      if (existing != null) {
-        purpose.text = existing['purpose']?.toString() ?? '';
-        amount.text = existing['requested_amount']?.toString() ?? '';
-        bank.text = existing['bank_name']?.toString() ?? '';
-        account.text = existing['bank_account_number']?.toString() ?? '';
-        holder.text = existing['bank_account_holder']?.toString() ?? '';
-        controller.loadCandidates();
-        final status = existing['status']?.toString();
-        if (status == 'NEEDS_GUARANTOR_REPLACEMENT' || status == 'DRAFT') {
-          stage = 1;
-        }
-        if (status == 'BORROWER_VERIFICATION_PENDING') {
-          stage = 2;
-          await controller.restoreLivenessStatus();
-        }
-        if (mounted) setState(() {});
-      }
-    });
+    // Initialise the draft before starting any async work. Previously this
+    // happened after loadHome completed, which could reset a liveness result
+    // that was submitted while the initial requests were still in flight.
+    controller.prepareDraft(_initialApplication);
+    unawaited(_loadInitialData());
+  }
+
+  Future<void> _loadInitialData() async {
+    // Home has already fetched these data before it opens a blank form. A
+    // second load here only toggles the shared controller's loading state and
+    // produces a needless full-screen spinner during navigation.
+    if (controller.products.isEmpty) {
+      await controller.loadHome();
+      if (!mounted) return;
+    }
+
+    final existing = _initialApplication;
+    if (existing == null) return;
+
+    // Products are only available after loadHome. This deliberately syncs
+    // product/tenor without resetting liveness state or its polling sequence.
+    controller.syncDraftProductSelection(existing);
+    purpose.text = existing['purpose']?.toString() ?? '';
+    amount.text = existing['requested_amount']?.toString() ?? '';
+    bank.text = existing['bank_name']?.toString() ?? '';
+    account.text = existing['bank_account_number']?.toString() ?? '';
+    holder.text = existing['bank_account_holder']?.toString() ?? '';
+    controller.loadCandidates();
+    final status = existing['status']?.toString();
+    if (status == 'NEEDS_GUARANTOR_REPLACEMENT' || status == 'DRAFT') {
+      stage = 1;
+    }
+    if (status == 'BORROWER_VERIFICATION_PENDING') {
+      stage = 2;
+      await controller.restoreLivenessStatus();
+    }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -963,21 +979,24 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
       ]);
 
   Future<void> _openLoanHome() async {
-    // Pop before binding another loan route. Otherwise GetX can reuse the
-    // controller owned by this form and dispose it during the transition.
-    Get.back(result: true);
+    // Do not rely on Get.previousRoute here. The form can be opened from
+    // several entry points and, after async liveness/signature work, GetX may
+    // report a different route than the one that launched it. Popping in that
+    // state can leave the shared Home controller with loading=true and no
+    // subsequent refresh (the UI then shows an endless spinner).
+    //
+    // Replace the form atomically and explicitly refresh the shared
+    // controller. Reset loading first so a reused binding can never carry a
+    // stale spinner into the destination page.
+    controller.loading(false);
+    controller.homeLoadError.value = null;
+    // `Get.offNamed` completes only when the destination is later popped, so
+    // never await it here (that would keep the submit action pending forever).
+    Get.offNamed(Routes.LOAN_V2);
     await Future<void>.delayed(Duration.zero);
-    if (Get.currentRoute == Routes.LOAN_V2) return;
-
-    if (Get.currentRoute == Routes.LOAN_V2_DETAIL) {
-      Get.back(result: true);
-      await Future<void>.delayed(Duration.zero);
-      if (Get.currentRoute == Routes.LOAN_V2) return;
+    if (Get.isRegistered<LoanV2Controller>()) {
+      unawaited(Get.find<LoanV2Controller>().loadHome());
     }
-
-    // The legacy loan menu opens this form directly. Remove this route first
-    // so GetX disposes its route-scoped controller before binding loan home.
-    Get.toNamed(Routes.LOAN_V2);
   }
 
   Future<void> _startActiveLiveness() async {
@@ -993,8 +1012,9 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
       await controller.restoreLivenessStatus();
     }
     if (!mounted || submitted) return;
-    Get.snackbar('Active liveness gagal dikirim',
-        'Rekaman tidak dapat dikirim. Periksa koneksi lalu coba kembali.');
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Active liveness gagal dikirim. Periksa koneksi lalu coba kembali.')));
   }
 
   Widget _imagePicker(

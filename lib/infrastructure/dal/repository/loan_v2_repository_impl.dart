@@ -146,14 +146,14 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
 
   Future<DataState<Map<String, dynamic>>> _upload(
       String endpoint, String field, String path,
-      {Map<String, dynamic>? fields}) async {
+      {Map<String, dynamic>? fields, Options? options}) async {
     try {
       final data = <String, dynamic>{
         ...?fields,
         field: await MultipartFile.fromFile(path)
       };
       final response = await RemoteProvider.post(
-          path: endpoint, data: FormData.fromMap(data));
+          path: endpoint, data: FormData.fromMap(data), options: options);
       return _state(
           response, Map<String, dynamic>.from(response.data['data'] ?? {}));
     } on DioException catch (error) {
@@ -176,7 +176,14 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
           int applicationId, int sessionId, String nonce, String path) =>
       _upload(
           'loan-applications/$applicationId/liveness-evidence', 'video', path,
-          fields: {'session_id': sessionId.toString(), 'nonce': nonce});
+          fields: {'session_id': sessionId.toString(), 'nonce': nonce},
+          // Evidence is encrypted and stored before the backend returns 202.
+          // Object storage can take substantially longer than ordinary API
+          // calls, especially over a development tunnel.
+          options: Options(
+            sendTimeout: const Duration(seconds: 90),
+            receiveTimeout: const Duration(seconds: 90),
+          ));
 
   @override
   Future<DataState<Map<String, dynamic>>> livenessStatus(
@@ -219,8 +226,23 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
   }
 
   @override
-  Future<DataState<List<dynamic>>> timeline(int applicationId) =>
-      _getList('loan-applications/$applicationId/timeline');
+  Future<DataState<List<dynamic>>> timeline(int applicationId) async {
+    try {
+      final response = await RemoteProvider.get(
+          path: 'loan-applications/$applicationId/timeline');
+      // The timeline endpoint returns a detail object.  The list rendered by
+      // the member app lives under `status_history`, unlike installments
+      // which returns a list directly.
+      final data = response.data['data'];
+      final history = data is Map ? data['status_history'] : data;
+      final items = history is List
+          ? List<dynamic>.from(history)
+          : const <dynamic>[];
+      return _state(response, items);
+    } on DioException catch (error) {
+      return CustomException<List<dynamic>>().dio(error);
+    }
+  }
 
   @override
   Future<DataState<List<dynamic>>> installments(int applicationId) =>

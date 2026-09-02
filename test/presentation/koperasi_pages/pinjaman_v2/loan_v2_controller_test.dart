@@ -49,6 +49,30 @@ void main() {
     expect(controller.applications, isEmpty);
   });
 
+  test('loadDetail keeps the application visible when supporting data fails',
+      () async {
+    final controller = LoanV2Controller(
+      _LoanRepositoryFake(
+        eligibility: () async => _success(<String, dynamic>{}),
+        products: () async => _success(<dynamic>[]),
+        applications: () async => _success(<String, dynamic>{'items': []}),
+        application: (_) async => _success(<String, dynamic>{
+          'id': 12,
+          'status': 'WAITING_GUARANTOR_CONFIRMATION',
+        }),
+        timeline: (_) => Future<DataState<List<dynamic>>>.error(
+            StateError('unexpected timeline payload')),
+        installments: (_) async => _success(<dynamic>[]),
+      ),
+      _FileRepositoryFake(),
+    );
+
+    await controller.loadDetail(12);
+
+    expect(controller.loading.value, isFalse);
+    expect(controller.application.value?['id'], 12);
+  });
+
   test('submitLivenessEvidence recovers when server already verified evidence',
       () async {
     final controller = LoanV2Controller(
@@ -116,6 +140,88 @@ void main() {
     expect(controller.livenessSubmitted.value, isTrue);
     expect(controller.livenessVerificationStatus.value, 'PENDING');
   });
+
+  test('syncDraftProductSelection does not reset an active liveness state', () {
+    final controller = LoanV2Controller(
+      _LoanRepositoryFake(
+        eligibility: () async => _success(<String, dynamic>{}),
+        products: () async => _success(<dynamic>[]),
+        applications: () async => _success(<String, dynamic>{'items': []}),
+      ),
+      _FileRepositoryFake(),
+    );
+    controller.application.value = <String, dynamic>{
+      'loan_product_id': 7,
+      'tenor_months': 6,
+    };
+    controller.livenessSubmitted.value = true;
+    controller.livenessVerificationStatus.value = 'PENDING';
+    controller.livenessChallenge.value = <String, dynamic>{'session_id': 14};
+
+    controller.syncDraftProductSelection();
+
+    expect(controller.selectedTenor.value, 6);
+    expect(controller.livenessSubmitted.value, isTrue);
+    expect(controller.livenessVerificationStatus.value, 'PENDING');
+    expect(controller.livenessChallenge.value?['session_id'], 14);
+  });
+
+  test('prepareDraft clears state retained from a previous application', () {
+    final controller = LoanV2Controller(
+      _LoanRepositoryFake(
+        eligibility: () async => _success(<String, dynamic>{}),
+        products: () async => _success(<dynamic>[]),
+        applications: () async => _success(<String, dynamic>{'items': []}),
+      ),
+      _FileRepositoryFake(),
+    );
+    controller.selectedProduct.value = <String, dynamic>{'id': 7};
+    controller.selectedTenor.value = 6;
+    controller.ktpPath.value = '/tmp/previous-ktp.jpg';
+    controller.selectedGuarantorIds.addAll([11]);
+
+    controller.prepareDraft();
+
+    expect(controller.selectedProduct.value, isNull);
+    expect(controller.selectedTenor.value, 0);
+    expect(controller.ktpPath.value, isNull);
+    expect(controller.selectedGuarantorIds, isEmpty);
+  });
+
+  test('submitLivenessEvidence waits for evidence that is still being stored',
+      () async {
+    var statusChecks = 0;
+    final controller = LoanV2Controller(
+      _LoanRepositoryFake(
+        eligibility: () async => _success(<String, dynamic>{}),
+        products: () async => _success(<dynamic>[]),
+        applications: () async => _success(<String, dynamic>{'items': []}),
+        uploadLivenessEvidence: (_, __, ___, ____) async =>
+            DataState<Map<String, dynamic>>(status: StatusResponse.failed),
+        livenessStatus: (_) async {
+          statusChecks++;
+          return _success(<String, dynamic>{
+            'status': statusChecks == 1 ? 'PENDING' : 'VERIFIED',
+            'liveness_session_status':
+                statusChecks == 1 ? 'CREATED' : 'VERIFIED',
+          });
+        },
+      ),
+      _FileRepositoryFake(),
+    );
+    controller.application.value = <String, dynamic>{'id': 5};
+    controller.livenessChallenge.value = <String, dynamic>{
+      'session_id': 14,
+      'nonce': 'nonce',
+    };
+    controller.livenessVideoPath.value = '/tmp/liveness.mp4';
+
+    final submitted = await controller.submitLivenessEvidence();
+
+    expect(submitted, isTrue);
+    expect(statusChecks, 2);
+    expect(controller.isLivenessVerified, isTrue);
+  });
 }
 
 DataState<T> _success<T>(T result) => DataState<T>(
@@ -133,11 +239,18 @@ class _LoanRepositoryFake implements LoanV2Repository {
         uploadLivenessEvidence,
     Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
         livenessStatus,
+    Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
+        application,
+    Future<DataState<List<dynamic>>> Function(int applicationId)? timeline,
+    Future<DataState<List<dynamic>>> Function(int applicationId)? installments,
   })  : _eligibility = eligibility,
         _products = products,
         _applications = applications,
         _uploadLivenessEvidence = uploadLivenessEvidence,
-        _livenessStatus = livenessStatus;
+        _livenessStatus = livenessStatus,
+        _application = application,
+        _timeline = timeline,
+        _installments = installments;
 
   final Future<DataState<Map<String, dynamic>>> Function() _eligibility;
   final Future<DataState<List<dynamic>>> Function() _products;
@@ -147,6 +260,12 @@ class _LoanRepositoryFake implements LoanV2Repository {
       _uploadLivenessEvidence;
   final Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
       _livenessStatus;
+  final Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
+      _application;
+  final Future<DataState<List<dynamic>>> Function(int applicationId)?
+      _timeline;
+  final Future<DataState<List<dynamic>>> Function(int applicationId)?
+      _installments;
 
   @override
   Future<DataState<Map<String, dynamic>>> eligibility() => _eligibility();
@@ -180,6 +299,34 @@ class _LoanRepositoryFake implements LoanV2Repository {
     if (handler == null) {
       return super
           .noSuchMethod(Invocation.method(#livenessStatus, [applicationId]));
+    }
+    return handler(applicationId);
+  }
+
+  @override
+  Future<DataState<Map<String, dynamic>>> application(int id) {
+    final handler = _application;
+    if (handler == null) {
+      return super.noSuchMethod(Invocation.method(#application, [id]));
+    }
+    return handler(id);
+  }
+
+  @override
+  Future<DataState<List<dynamic>>> timeline(int applicationId) {
+    final handler = _timeline;
+    if (handler == null) {
+      return super.noSuchMethod(Invocation.method(#timeline, [applicationId]));
+    }
+    return handler(applicationId);
+  }
+
+  @override
+  Future<DataState<List<dynamic>>> installments(int applicationId) {
+    final handler = _installments;
+    if (handler == null) {
+      return super
+          .noSuchMethod(Invocation.method(#installments, [applicationId]));
     }
     return handler(applicationId);
   }

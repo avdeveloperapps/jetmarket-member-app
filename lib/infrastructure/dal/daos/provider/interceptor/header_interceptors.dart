@@ -9,9 +9,12 @@ import '../../../../navigation/routes.dart';
 InterceptorsWrapper headerInterceptor({required bool logs}) {
   return InterceptorsWrapper(
     onRequest: (options, handler) {
-      options.connectTimeout = 8.seconds;
-      options.receiveTimeout = 8.seconds;
-      options.sendTimeout = 8.seconds;
+      // Some endpoints (notably encrypted liveness-video upload) need a
+      // longer timeout supplied by the caller. Keep that explicit value and
+      // only provide the normal API default when none was configured.
+      options.connectTimeout ??= 8.seconds;
+      options.receiveTimeout ??= 8.seconds;
+      options.sendTimeout ??= 8.seconds;
 
       options.headers[HttpHeaders.contentTypeHeader] = 'application/json';
       var accessToken = AppPreference().getAccessToken();

@@ -7,6 +7,7 @@ import 'package:jetmarket/infrastructure/theme/app_colors.dart';
 import 'package:jetmarket/infrastructure/theme/app_text.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/controllers/loan_v2.controller.dart';
 import 'package:jetmarket/utils/extension/currency.dart';
+import 'package:jetmarket/utils/loan_v2_status.dart';
 import 'package:jetmarket/utils/style/app_style.dart';
 
 class LoanV2HomeScreen extends StatefulWidget {
@@ -45,9 +46,20 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
         if (controller.homeLoadError.value != null) {
           return _loadError(controller.homeLoadError.value!);
         }
-        final canApply = controller.eligibility['eligible'] == true;
-        final reasons =
-            List<dynamic>.from(controller.eligibility['reasons'] ?? []);
+        final hasActiveApplication =
+            controller.applications.whereType<Map>().any((item) => !const {
+              'COMPLETED',
+              'REJECTED',
+              'CANCELLED',
+              'EXPIRED',
+            }.contains(item['status']?.toString()));
+        final canApply = controller.eligibility['eligible'] == true &&
+            !hasActiveApplication;
+        final reasons = hasActiveApplication
+            ? <dynamic>[
+                'Anda masih memiliki pengajuan pinjaman yang sedang diproses.'
+              ]
+            : List<dynamic>.from(controller.eligibility['reasons'] ?? []);
         return RefreshIndicator(
           color: kPrimaryColor,
           onRefresh: controller.loadHome,
@@ -189,7 +201,7 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
                     ? kPrimaryColor2
                     : kWarning2Color,
             borderRadius: BorderRadius.circular(6.r)),
-        child: Text(status.replaceAll('_', ' '),
+        child: Text(loanV2StatusLabel(status),
             style: text8GreyRegular.copyWith(
                 color: success
                     ? kSuccessColor
