@@ -11,10 +11,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:jetmarket/domain/core/interfaces/file_repository.dart';
 import 'package:jetmarket/domain/core/interfaces/loan_v2_repository.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_signature_pad.screen.dart';
+import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_agreement_preview.screen.dart';
 import 'package:jetmarket/utils/network/action_status.dart';
 import 'package:jetmarket/utils/network/status_response.dart';
 import 'package:jetmarket/utils/services/loan_mobilefacenet.service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 class LoanV2Controller extends GetxController {
   LoanV2Controller(this._repository, this._fileRepository);
@@ -30,6 +32,10 @@ class LoanV2Controller extends GetxController {
   final selectedGuarantorIds = <int>[].obs;
   final timeline = <dynamic>[].obs;
   final installments = <dynamic>[].obs;
+  final documents = <dynamic>[].obs;
+  final interview = Rxn<Map<String, dynamic>>();
+  final borrowerFinalSignatureExists = false.obs;
+  final finalAgreementReadyForBorrowerSignature = false.obs;
   final application = Rxn<Map<String, dynamic>>();
   final selectedProduct = Rxn<Map<String, dynamic>>();
   final selectedTenor = 0.obs;
@@ -116,6 +122,15 @@ class LoanV2Controller extends GetxController {
     application.value = null;
     timeline.clear();
     installments.clear();
+    documents.clear();
+    interview.value = null;
+    borrowerFinalSignatureExists(false);
+    finalAgreementReadyForBorrowerSignature(false);
+    // The application-form signature and the final-agreement signature are
+    // separate legal actions. Never carry a previously drawn image into the
+    // detail flow.
+    signaturePath.value = null;
+    signatureReceipt.value = null;
     try {
       // Load the application first: optional timeline/installment data must
       // never hide a valid application detail from the member.
@@ -125,14 +140,23 @@ class LoanV2Controller extends GetxController {
             Map<String, dynamic>.from(applicationResult.result ?? {});
       }
 
-      final results = await Future.wait([
-        _repository.timeline(id),
-        _repository.installments(id)
-      ]);
-      final timelineResult = results[0] as dynamic;
+      final results = await Future.wait(
+          [_repository.timelineDetail(id), _repository.installments(id)]);
+      final detailResult = results[0] as dynamic;
       final installmentResult = results[1] as dynamic;
-      if (timelineResult.status == StatusResponse.success) {
-        timeline.assignAll(timelineResult.result ?? []);
+      if (detailResult.status == StatusResponse.success &&
+          detailResult.result is Map) {
+        final detail = Map<String, dynamic>.from(detailResult.result as Map);
+        timeline.assignAll(List<dynamic>.from(detail['status_history'] ?? []));
+        documents.assignAll(List<dynamic>.from(detail['documents'] ?? []));
+        if (detail['interview'] is Map) {
+          interview.value =
+              Map<String, dynamic>.from(detail['interview'] as Map);
+        }
+        borrowerFinalSignatureExists(
+            detail['borrower_final_signature_exists'] == true);
+        finalAgreementReadyForBorrowerSignature(
+            detail['final_agreement_ready_for_borrower_signature'] == true);
       }
       if (installmentResult.status == StatusResponse.success) {
         installments.assignAll(installmentResult.result ?? []);
@@ -142,6 +166,73 @@ class LoanV2Controller extends GetxController {
           name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
     } finally {
       loading(false);
+    }
+  }
+
+  Map<String, dynamic>? get latestFinalAgreement {
+    final matches = documents
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .where((item) => item['document_type'] == 'FINAL_AGREEMENT')
+        .toList();
+    matches.sort((left, right) => (_asInt(right['version']) ?? 0)
+        .compareTo(_asInt(left['version']) ?? 0));
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  Future<void> openFinalAgreement() async {
+    final current = application.value;
+    final document = latestFinalAgreement;
+    final applicationId = _asInt(current?['id']);
+    final documentId = _asInt(document?['id']);
+    if (applicationId == null || documentId == null) return;
+    actionStatus(ActionStatus.loading);
+    try {
+      final response =
+          await _repository.downloadDocument(applicationId, documentId);
+      if (response.status != StatusResponse.success ||
+          response.result == null) {
+        actionStatus(ActionStatus.failed);
+        Get.snackbar('Dokumen belum dapat diunduh',
+            response.message ?? 'Silakan coba lagi.');
+        return;
+      }
+      final directory = await getTemporaryDirectory();
+      final number =
+          current?['application_number']?.toString() ?? applicationId;
+      final version = _asInt(document?['version']) ?? 1;
+      final file = File('${directory.path}/$number-perjanjian-v$version.pdf');
+      await file.writeAsBytes(response.result!, flush: true);
+      actionStatus(ActionStatus.success);
+      await Get.to(() => LoanAgreementPreviewScreen(
+          file: file,
+          title: version >= 2 ? 'Perjanjian Final' : 'Draf Perjanjian'));
+    } catch (error, stackTrace) {
+      developer.log('Failed to download final loan agreement',
+          name: 'LoanV2Controller', error: error, stackTrace: stackTrace);
+      actionStatus(ActionStatus.failed);
+      Get.snackbar('Dokumen belum dapat diunduh', 'Silakan coba lagi.');
+    }
+  }
+
+  Future<void> signFinalAgreementFromDetail() async {
+    if (!finalAgreementReadyForBorrowerSignature.value) {
+      Get.snackbar('Perjanjian belum siap',
+          'Finance masih menyiapkan pengesahan internal dokumen.');
+      return;
+    }
+    // Only continue when this invocation actually produced a new signature.
+    // A cancelled canvas must never fall back to an older signaturePath.
+    final path = await pickSignature();
+    if (path == null) return;
+    final signed = await sign('FINAL_AGREEMENT');
+    final applicationId = _asInt(application.value?['id']);
+    if (signed && applicationId != null) {
+      await loadDetail(applicationId);
+      Get.snackbar('Perjanjian ditandatangani',
+          'TTD tersimpan. Dokumen menunggu TTD Finance.');
+    } else if (!signed) {
+      Get.snackbar('TTD belum tersimpan', 'Silakan coba lagi.');
     }
   }
 
@@ -288,9 +379,12 @@ class LoanV2Controller extends GetxController {
     if (image != null) facePath.value = image.path;
   }
 
-  Future<void> pickSignature() async {
+  Future<String?> pickSignature() async {
     final path = await Get.to<String>(() => const LoanSignaturePadScreen());
-    if (path != null && path.isNotEmpty) signaturePath.value = path;
+    if (path == null || path.isEmpty) return null;
+    signaturePath.value = path;
+    signatureReceipt.value = null;
+    return path;
   }
 
   Future<bool> saveDraft(

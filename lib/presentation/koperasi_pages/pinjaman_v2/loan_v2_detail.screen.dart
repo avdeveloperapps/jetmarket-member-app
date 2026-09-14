@@ -10,6 +10,7 @@ import 'package:jetmarket/infrastructure/theme/app_text.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/controllers/loan_v2.controller.dart';
 import 'package:jetmarket/utils/extension/currency.dart';
 import 'package:jetmarket/utils/loan_v2_status.dart';
+import 'package:jetmarket/utils/network/action_status.dart';
 import 'package:jetmarket/utils/style/app_style.dart';
 
 class LoanV2DetailScreen extends StatefulWidget {
@@ -58,6 +59,14 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
             Gap(14.h),
             _status(app),
             Gap(14.h),
+            if (controller.interview.value != null) ...[
+              _interview(),
+              Gap(14.h),
+            ],
+            if (controller.latestFinalAgreement != null) ...[
+              _agreement(),
+              Gap(14.h),
+            ],
             _timeline(),
             Gap(14.h),
             _installments(),
@@ -92,6 +101,41 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
                 .toString()
                 .toIdrFormat)
       ]));
+
+  Widget _agreement() {
+    final document = controller.latestFinalAgreement!;
+    final version = (document['version'] as num? ?? 1).toInt();
+    final isExecuted = version >= 2 && document['status'] == 'SIGNED';
+    return _section('Dokumen Perjanjian', [
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(isExecuted ? Icons.verified_rounded : Icons.description_rounded,
+            color: isExecuted ? Colors.green : kPrimaryColor, size: 22),
+        Gap(10.w),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(isExecuted ? 'Perjanjian Final' : 'Draf Perjanjian',
+              style: text12BlackSemiBold),
+          Gap(3.h),
+          Text(
+              isExecuted
+                  ? 'Telah ditandatangani oleh Anda dan Finance.'
+                  : 'Baca dokumen ini sebelum memberikan TTD.',
+              style: text10HintRegular),
+        ]))
+      ]),
+      Gap(12.h),
+      AppButton.secondary(
+          text: isExecuted
+              ? 'Buka / Unduh Perjanjian Final'
+              : 'Buka / Unduh Draf Perjanjian',
+          actionStatus: controller.actionStatus.value == ActionStatus.loading
+              ? ActionStatus.loading
+              : ActionStatus.initalize,
+          onPressed: controller.openFinalAgreement)
+    ]);
+  }
+
   Widget _status(Map<String, dynamic> app) {
     final status = app['status']?.toString() ?? '-';
     return Container(
@@ -105,6 +149,35 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
           Gap(5.h),
           Text(_statusMessage(status), style: text12HintRegular)
         ]));
+  }
+
+  Widget _interview() {
+    final interview = controller.interview.value!;
+    final status = interview['status']?.toString() ?? '';
+    final isCompleted = status == 'COMPLETED';
+    return _section('Rincian Wawancara', [
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(isCompleted ? Icons.check_circle_rounded : Icons.event_rounded,
+            color: isCompleted ? Colors.green : kPrimaryColor, size: 22),
+        Gap(10.w),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(isCompleted ? 'Wawancara telah selesai' : 'Wawancara dijadwalkan',
+              style: text12BlackSemiBold),
+          Gap(3.h),
+          Text(
+              isCompleted
+                  ? 'Hasil wawancara sedang menjadi bagian peninjauan pengajuan.'
+                  : 'Silakan hadir sesuai jadwal berikut.',
+              style: text10HintRegular),
+        ]))
+      ]),
+      Gap(12.h),
+      _line('Jadwal', _dateTime(interview['scheduled_at']?.toString())),
+      if (isCompleted && (interview['summary']?.toString().trim().isNotEmpty ?? false))
+        _line('Ringkasan', interview['summary'].toString()),
+    ]);
   }
 
   Widget _timeline() => _section(
@@ -194,8 +267,18 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
               Get.toNamed(Routes.LOAN_V2_APPLICATION, arguments: app));
     }
     if (status == 'APPROVED_AWAITING_FINAL_SIGNATURES') {
-      return AppButton.primary(
-          text: 'TTD Dokumen Final', onPressed: () => _signFinal());
+      if (!controller.borrowerFinalSignatureExists.value) {
+        if (!controller.finalAgreementReadyForBorrowerSignature.value) {
+          return AppButton.secondary(
+              text: 'Menunggu Pengesahan Finance', onPressed: null);
+        }
+        return AppButton.primary(
+            text: 'Tandatangani Perjanjian Akhir',
+            actionStatus: controller.actionStatus.value,
+            onPressed: controller.signFinalAgreementFromDetail);
+      }
+      return AppButton.secondary(
+          text: 'TTD Tersimpan · Menunggu Finance', onPressed: null);
     }
     if ([
       'DRAFT',
@@ -207,14 +290,6 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
           text: 'Batalkan Pengajuan', onPressed: controller.cancel);
     }
     return const SizedBox.shrink();
-  }
-
-  Future<void> _signFinal() async {
-    await controller.pickSignature();
-    if (controller.signaturePath.value != null &&
-        await controller.sign('FINAL_AGREEMENT')) {
-      await controller.loadDetail(id);
-    }
   }
 
   Widget _line(String label, String value) => Padding(
@@ -233,6 +308,15 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
         : DateFormat('dd MMM yyyy', 'id_ID').format(date.toLocal());
   }
 
+  String _dateTime(String? value) {
+    if (value == null || value.isEmpty) return '-';
+    final date = DateTime.tryParse(value);
+    return date == null
+        ? '-'
+        : DateFormat('EEEE, dd MMM yyyy • HH:mm', 'id_ID')
+            .format(date.toLocal());
+  }
+
   String _statusMessage(String status) {
     const messages = {
       'DRAFT': 'Lengkapi data dan pilih penjamin untuk melanjutkan.',
@@ -243,7 +327,7 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
       'PENDING_ADMIN_REVIEW': 'Pengajuan menunggu proses admin.',
       'WAITING_INTERVIEW': 'Interview wajib sedang dijadwalkan.',
       'APPROVED_AWAITING_FINAL_SIGNATURES':
-          'Dokumen final tersedia untuk ditandatangani.',
+          'Baca dan tandatangani perjanjian akhir. Setelah itu Finance akan memberikan TTD akhir.',
       'AWAITING_DISBURSEMENT': 'Dokumen lengkap. Menunggu pencairan manual.',
       'DISBURSED': 'Pinjaman telah dicairkan.'
     };

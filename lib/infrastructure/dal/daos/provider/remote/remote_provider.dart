@@ -37,9 +37,11 @@ class RemoteProvider {
   static Future<Response> get(
       {required String path,
       Map<String, dynamic>? queryParameters,
-      bool? showLogs}) async {
+      bool? showLogs,
+      Options? options}) async {
     _dioInstance.options = _baseOptionBaseUrl;
-    return await _dioInstance.get(path, queryParameters: queryParameters);
+    return await _dioInstance.get(path,
+        queryParameters: queryParameters, options: options);
   }
 
   static Future<Response> getLocation(

@@ -235,12 +235,42 @@ class LoanV2RepositoryImpl implements LoanV2Repository {
       // which returns a list directly.
       final data = response.data['data'];
       final history = data is Map ? data['status_history'] : data;
-      final items = history is List
-          ? List<dynamic>.from(history)
-          : const <dynamic>[];
+      final items =
+          history is List ? List<dynamic>.from(history) : const <dynamic>[];
       return _state(response, items);
     } on DioException catch (error) {
       return CustomException<List<dynamic>>().dio(error);
+    }
+  }
+
+  @override
+  Future<DataState<Map<String, dynamic>>> timelineDetail(
+      int applicationId) async {
+    try {
+      final response = await RemoteProvider.get(
+          path: 'loan-applications/$applicationId/timeline');
+      return _state(response,
+          Map<String, dynamic>.from(response.data['data'] ?? const {}));
+    } on DioException catch (error) {
+      return CustomException<Map<String, dynamic>>().dio(error);
+    }
+  }
+
+  @override
+  Future<DataState<List<int>>> downloadDocument(
+      int applicationId, int documentId) async {
+    try {
+      final response = await RemoteProvider.get(
+          path:
+              'loan-applications/$applicationId/documents/$documentId/download',
+          options: Options(
+              responseType: ResponseType.bytes,
+              headers: {'Accept': 'application/pdf'}));
+      return DataState<List<int>>(
+          result: List<int>.from(response.data as List),
+          status: StatusCodeResponse.cek(response: response));
+    } on DioException catch (error) {
+      return CustomException<List<int>>().dio(error);
     }
   }
 

@@ -60,7 +60,7 @@ void main() {
           'id': 12,
           'status': 'WAITING_GUARANTOR_CONFIRMATION',
         }),
-        timeline: (_) => Future<DataState<List<dynamic>>>.error(
+        timelineDetail: (_) => Future<DataState<Map<String, dynamic>>>.error(
             StateError('unexpected timeline payload')),
         installments: (_) async => _success(<dynamic>[]),
       ),
@@ -71,6 +71,43 @@ void main() {
 
     expect(controller.loading.value, isFalse);
     expect(controller.application.value?['id'], 12);
+  });
+
+  test('loadDetail exposes final-signature readiness and clears an old TTD',
+      () async {
+    final controller = LoanV2Controller(
+      _LoanRepositoryFake(
+        eligibility: () async => _success(<String, dynamic>{}),
+        products: () async => _success(<dynamic>[]),
+        applications: () async => _success(<String, dynamic>{'items': []}),
+        application: (_) async => _success(<String, dynamic>{
+          'id': 13,
+          'status': 'APPROVED_AWAITING_FINAL_SIGNATURES',
+        }),
+        timelineDetail: (_) async => _success(<String, dynamic>{
+          'status_history': <dynamic>[],
+          'documents': <dynamic>[
+            <String, dynamic>{
+              'id': 91,
+              'document_type': 'FINAL_AGREEMENT',
+              'version': 1,
+            }
+          ],
+          'borrower_final_signature_exists': false,
+          'final_agreement_ready_for_borrower_signature': true,
+        }),
+        installments: (_) async => _success(<dynamic>[]),
+      ),
+      _FileRepositoryFake(),
+    );
+    controller.signaturePath.value = '/tmp/application-signature.png';
+
+    await controller.loadDetail(13);
+
+    expect(controller.signaturePath.value, isNull);
+    expect(controller.finalAgreementReadyForBorrowerSignature.value, isTrue);
+    expect(controller.borrowerFinalSignatureExists.value, isFalse);
+    expect(controller.latestFinalAgreement?['id'], 91);
   });
 
   test('submitLivenessEvidence recovers when server already verified evidence',
@@ -242,6 +279,8 @@ class _LoanRepositoryFake implements LoanV2Repository {
     Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
         application,
     Future<DataState<List<dynamic>>> Function(int applicationId)? timeline,
+    Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
+        timelineDetail,
     Future<DataState<List<dynamic>>> Function(int applicationId)? installments,
   })  : _eligibility = eligibility,
         _products = products,
@@ -250,6 +289,7 @@ class _LoanRepositoryFake implements LoanV2Repository {
         _livenessStatus = livenessStatus,
         _application = application,
         _timeline = timeline,
+        _timelineDetail = timelineDetail,
         _installments = installments;
 
   final Future<DataState<Map<String, dynamic>>> Function() _eligibility;
@@ -264,6 +304,8 @@ class _LoanRepositoryFake implements LoanV2Repository {
       _application;
   final Future<DataState<List<dynamic>>> Function(int applicationId)?
       _timeline;
+  final Future<DataState<Map<String, dynamic>>> Function(int applicationId)?
+      _timelineDetail;
   final Future<DataState<List<dynamic>>> Function(int applicationId)?
       _installments;
 
@@ -317,6 +359,16 @@ class _LoanRepositoryFake implements LoanV2Repository {
     final handler = _timeline;
     if (handler == null) {
       return super.noSuchMethod(Invocation.method(#timeline, [applicationId]));
+    }
+    return handler(applicationId);
+  }
+
+  @override
+  Future<DataState<Map<String, dynamic>>> timelineDetail(int applicationId) {
+    final handler = _timelineDetail;
+    if (handler == null) {
+      return super
+          .noSuchMethod(Invocation.method(#timelineDetail, [applicationId]));
     }
     return handler(applicationId);
   }

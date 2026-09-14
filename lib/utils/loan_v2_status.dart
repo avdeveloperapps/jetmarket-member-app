@@ -6,7 +6,7 @@ const _loanV2StatusLabels = <String, String>{
   'PENDING_ADMIN_REVIEW': 'Menunggu Tinjauan Admin',
   'WAITING_INTERVIEW': 'Menunggu Wawancara',
   'INTERVIEW_COMPLETED': 'Siap Ditinjau Admin',
-  'APPROVED_AWAITING_FINAL_SIGNATURES': 'Disetujui, Menunggu TTD Akhir',
+  'APPROVED_AWAITING_FINAL_SIGNATURES': 'Disetujui, Menunggu TTD Perjanjian',
   'AWAITING_DISBURSEMENT': 'Menunggu Pencairan',
   'DISBURSED': 'Sudah Dicairkan',
   'COMPLETED': 'Selesai',

@@ -45,6 +45,8 @@ void toDirectPagelink(String path, int pathId, String? refId) {
       Get.toNamed(Routes.DETAIL_PENGAJUAN_PINJAMAN, arguments: [pathId, null]);
     case 'loan-bill':
       Get.toNamed(Routes.DETAIL_TAGIHAN_BULANAN, arguments: [pathId, null]);
+    case 'loans':
+      Get.toNamed(Routes.LOAN_V2_DETAIL, arguments: pathId);
     case 'saving':
       Get.toNamed(Routes.DETAIL_MENABUNG, arguments: [pathId, null]);
     case 'referral':
@@ -165,6 +167,8 @@ settingShowNotification(RemoteMessage message) async {
     } else if (parts[0] == 'loan' && parts[1] == 'bill') {
       Get.toNamed(Routes.DETAIL_TAGIHAN_BULANAN,
           arguments: [int.parse(parts[2]), 'from-notificatiion', null, null]);
+    } else if (parts[0] == 'loans' && parts.length > 1) {
+      toDirectPagelink(parts[0], int.parse(parts[1]), null);
     } else if (parts[0] == 'transaction') {
       Get.offNamed(Routes.ORDER_LIST_TRANSACTION,
           arguments: [parts[1], 'from-notification']);
@@ -194,6 +198,14 @@ class FirebaseService {
 
   openMessage(RemoteMessage? message) {
     updateUnreadNotification();
+    final pagelink = message?.data['pagelink']?.toString() ?? '';
+    final parts = pagelink.split('/')..removeWhere((part) => part.isEmpty);
+    if (parts.length > 1 && parts[0] == 'loans') {
+      final applicationId = int.tryParse(parts[1]);
+      if (applicationId != null && applicationId > 0) {
+        Get.toNamed(Routes.LOAN_V2_DETAIL, arguments: applicationId);
+      }
+    }
   }
 
   static Future<void> handleForegroundNotification(
@@ -230,6 +242,13 @@ class FirebaseService {
           'path': "${parts[0]}-${parts[1]}",
           'pathId': int.parse(parts[2]),
           'refId': "",
+          'lifecycle': 'terminate'
+        };
+      } else if (parts[0] == 'loans' && parts.length > 1) {
+        notificationArgument = {
+          'path': parts[0],
+          'pathId': int.tryParse(parts[1]) ?? 0,
+          'refId': '',
           'lifecycle': 'terminate'
         };
       } else if (parts[0] == 'order') {
@@ -302,6 +321,8 @@ class FirebaseService {
                 parts[0] == 'loan' && parts[1] == 'propose') {
               toDirectPagelink(
                   "${parts[0]}-${parts[1]}", int.parse(parts[2]), "");
+            } else if (parts[0] == 'loans' && parts.length > 1) {
+              toDirectPagelink(parts[0], int.parse(parts[1]), null);
             } else if (parts[0] == 'order') {
               String value = parts[1];
 

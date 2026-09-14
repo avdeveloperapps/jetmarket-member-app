@@ -8,7 +8,7 @@ void main() {
     expect(loanV2StatusLabel('WAITING_GUARANTOR_CONFIRMATION'),
         'Menunggu Konfirmasi Penjamin');
     expect(loanV2StatusLabel('APPROVED_AWAITING_FINAL_SIGNATURES'),
-        'Disetujui, Menunggu TTD Akhir');
+        'Disetujui, Menunggu TTD Perjanjian');
     expect(loanV2StatusLabel('VERIFICATION_PENDING'),
         'Menunggu Verifikasi Penjamin');
     expect(loanV2StatusLabel('PARTIALLY_PAID'), 'Dibayar Sebagian');

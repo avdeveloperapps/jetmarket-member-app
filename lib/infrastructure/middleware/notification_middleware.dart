@@ -53,6 +53,8 @@ class NotificationMiddleware extends GetMiddleware {
         return RouteSettings(
             name: Routes.DETAIL_TAGIHAN_BULANAN,
             arguments: [pathId, lifecycle]);
+      case 'loans':
+        return RouteSettings(name: Routes.LOAN_V2_DETAIL, arguments: pathId);
       case 'saving':
         return RouteSettings(
             name: Routes.DETAIL_MENABUNG, arguments: [pathId, lifecycle]);

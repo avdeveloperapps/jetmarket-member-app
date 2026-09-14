@@ -34,6 +34,9 @@ abstract class LoanV2Repository {
   Future<DataState<Map<String, dynamic>>> submit(
       int applicationId, int rowVersion);
   Future<DataState<List<dynamic>>> timeline(int applicationId);
+  Future<DataState<Map<String, dynamic>>> timelineDetail(int applicationId);
+  Future<DataState<List<int>>> downloadDocument(
+      int applicationId, int documentId);
   Future<DataState<List<dynamic>>> installments(int applicationId);
   Future<DataState<void>> cancel(int applicationId, String reason);
 }
