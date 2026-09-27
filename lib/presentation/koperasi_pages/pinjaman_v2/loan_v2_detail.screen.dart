@@ -169,12 +169,13 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
           Text(
               isCompleted
                   ? 'Hasil wawancara sedang menjadi bagian peninjauan pengajuan.'
-                  : 'Silakan hadir sesuai jadwal berikut.',
+                  : 'Silakan hadir sesuai jadwal berikut. Penjamin juga diundang melalui email.',
               style: text10HintRegular),
         ]))
       ]),
       Gap(12.h),
       _line('Jadwal', _dateTime(interview['scheduled_at']?.toString())),
+      _line('Peserta', 'Peminjam dan seluruh penjamin'),
       if (isCompleted && (interview['summary']?.toString().trim().isNotEmpty ?? false))
         _line('Ringkasan', interview['summary'].toString()),
     ]);
@@ -276,6 +277,13 @@ class _LoanV2DetailScreenState extends State<LoanV2DetailScreen> {
             text: 'Tandatangani Perjanjian Akhir',
             actionStatus: controller.actionStatus.value,
             onPressed: controller.signFinalAgreementFromDetail);
+      }
+      final total = controller.guarantorSignatureTotal.value;
+      final signed = controller.guarantorSignatureSigned.value;
+      if (total > 0 && signed < total) {
+        return AppButton.secondary(
+            text: 'TTD Tersimpan · Menunggu TTD Penjamin ($signed/$total)',
+            onPressed: null);
       }
       return AppButton.secondary(
           text: 'TTD Tersimpan · Menunggu Finance', onPressed: null);

@@ -36,6 +36,10 @@ class LoanV2Controller extends GetxController {
   final interview = Rxn<Map<String, dynamic>>();
   final borrowerFinalSignatureExists = false.obs;
   final finalAgreementReadyForBorrowerSignature = false.obs;
+  // Guarantors sign the same final agreement, so the borrower waits for them
+  // before Finance can seal the executed copy.
+  final guarantorSignatureTotal = 0.obs;
+  final guarantorSignatureSigned = 0.obs;
   final application = Rxn<Map<String, dynamic>>();
   final selectedProduct = Rxn<Map<String, dynamic>>();
   final selectedTenor = 0.obs;
@@ -126,6 +130,8 @@ class LoanV2Controller extends GetxController {
     interview.value = null;
     borrowerFinalSignatureExists(false);
     finalAgreementReadyForBorrowerSignature(false);
+    guarantorSignatureTotal(0);
+    guarantorSignatureSigned(0);
     // The application-form signature and the final-agreement signature are
     // separate legal actions. Never carry a previously drawn image into the
     // detail flow.
@@ -157,6 +163,10 @@ class LoanV2Controller extends GetxController {
             detail['borrower_final_signature_exists'] == true);
         finalAgreementReadyForBorrowerSignature(
             detail['final_agreement_ready_for_borrower_signature'] == true);
+        guarantorSignatureTotal(
+            (detail['guarantor_signature_total'] as num?)?.toInt() ?? 0);
+        guarantorSignatureSigned(
+            (detail['guarantor_signature_signed'] as num?)?.toInt() ?? 0);
       }
       if (installmentResult.status == StatusResponse.success) {
         installments.assignAll(installmentResult.result ?? []);
