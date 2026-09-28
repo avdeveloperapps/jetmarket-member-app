@@ -55,6 +55,11 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
             }.contains(item['status']?.toString()));
         final canApply = controller.eligibility['eligible'] == true &&
             !hasActiveApplication;
+        // Akun yang tidak eligible dikunci total dari aksi pengajuan agar
+        // tidak mentok di tengah jalan (backend 409). Riwayat aktif tetap
+        // bisa dibuka; hanya akun tanpa pengajuan berjalan yang dikunci.
+        final pageLocked = controller.eligibility['eligible'] != true &&
+            !hasActiveApplication;
         final reasons = hasActiveApplication
             ? <dynamic>[
                 'Anda masih memiliki pengajuan pinjaman yang sedang diproses.'
@@ -65,14 +70,19 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
           onRefresh: controller.loadHome,
           child: ListView(padding: AppStyle.paddingAll16, children: [
             _hero(canApply, reasons),
+            if (pageLocked) ...[
+              Gap(12.h),
+              _lockedBanner(),
+            ],
             Gap(20.h),
             Text('Pengajuan Saya', style: text14BlackSemiBold),
             Gap(10.h),
             if (controller.applications.isEmpty)
               _empty()
             else
-              ...controller.applications.map(
-                  (item) => _applicationCard(Map<String, dynamic>.from(item))),
+              ...controller.applications.map((item) => _applicationCard(
+                  Map<String, dynamic>.from(item),
+                  enabled: !pageLocked)),
           ]),
         );
       }),
@@ -132,6 +142,28 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
         ]),
       );
 
+  Widget _lockedBanner() => Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(14.r),
+        decoration: BoxDecoration(
+            color: kWarning2Color,
+            borderRadius: AppStyle.borderRadius8All,
+            border: Border.all(color: kWarningColor.withValues(alpha: .35))),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.block_outlined, color: kWarningColor),
+          Gap(10.w),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text('Akun belum eligible', style: text12BlackSemiBold),
+                Gap(4.h),
+                Text(
+                    'Akun Anda belum eligible untuk mengajukan pinjaman. Hubungi tim teknis agar akun Anda eligible.',
+                    style: text12HintRegular),
+              ])),
+        ]));
+
   Widget _empty() => Container(
         padding: EdgeInsets.all(20.r),
         decoration: BoxDecoration(
@@ -145,15 +177,19 @@ class _LoanV2HomeScreenState extends State<LoanV2HomeScreen> {
         ]),
       );
 
-  Widget _applicationCard(Map<String, dynamic> item) => Padding(
+  Widget _applicationCard(Map<String, dynamic> item,
+          {bool enabled = true}) =>
+      Padding(
         padding: EdgeInsets.only(bottom: 10.h),
         child: InkWell(
           borderRadius: AppStyle.borderRadius8All,
-          onTap: () async {
-            final changed =
-                await Get.toNamed(Routes.LOAN_V2_DETAIL, arguments: item['id']);
-            if (changed == true) await controller.loadHome();
-          },
+          onTap: enabled
+              ? () async {
+                  final changed = await Get.toNamed(Routes.LOAN_V2_DETAIL,
+                      arguments: item['id']);
+                  if (changed == true) await controller.loadHome();
+                }
+              : null,
           child: Container(
             padding: EdgeInsets.all(14.r),
             decoration: BoxDecoration(

@@ -397,12 +397,27 @@ class LoanV2Controller extends GetxController {
     return path;
   }
 
+  bool get isBorrowerEligible => eligibility['eligible'] == true;
+
+  String ineligibleMessage() {
+    final reasons = eligibility['reasons'];
+    final detail = reasons is List && reasons.isNotEmpty
+        ? reasons.map((item) => item.toString()).join('\n')
+        : 'Data karyawan belum memenuhi syarat pengajuan.';
+    return '$detail\nHubungi tim teknis agar akun Anda eligible.';
+  }
+
   Future<bool> saveDraft(
       {required String purpose,
       required int requestedAmount,
       required String bankName,
       required String accountNumber,
       required String accountHolder}) async {
+    if (!isBorrowerEligible) {
+      actionStatus(ActionStatus.failed);
+      Get.snackbar('Akun belum eligible', ineligibleMessage());
+      return false;
+    }
     final validationMessage = _validateDraftInput(
       purpose: purpose,
       requestedAmount: requestedAmount,

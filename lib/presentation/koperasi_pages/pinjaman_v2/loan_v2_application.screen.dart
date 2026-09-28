@@ -167,6 +167,9 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
           ? AutovalidateMode.onUserInteraction
           : AutovalidateMode.disabled,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Obx(() => controller.isBorrowerEligible
+            ? const SizedBox.shrink()
+            : _ineligibleBanner()),
         Text('Data Pengajuan', style: text14BlackSemiBold),
         if (_initialApplication == null &&
             controller.latestResumableApplication != null) ...[
@@ -319,14 +322,16 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
               }
             })),
         Gap(18.h),
-        AppButton.primary(
-            text: 'Simpan dan Pilih Penjamin',
-            actionStatus: controller.actionStatus.value,
-            onPressed: !_isCurrentTermsConfirmed
-                ? null
-                : () async {
-                    FocusScope.of(context).unfocus();
-                    setState(() => _attemptedSave = true);
+        Obx(() {
+          final eligible = controller.isBorrowerEligible;
+          return AppButton.primary(
+              text: 'Simpan dan Pilih Penjamin',
+              actionStatus: controller.actionStatus.value,
+              onPressed: !eligible || !_isCurrentTermsConfirmed
+                  ? null
+                  : () async {
+                      FocusScope.of(context).unfocus();
+                      setState(() => _attemptedSave = true);
                     final hasKtp =
                         controller.ktpPath.value?.trim().isNotEmpty == true;
                     if (!hasKtp) setState(() => _showKtpError = true);
@@ -352,7 +357,30 @@ class _LoanV2ApplicationScreenState extends State<LoanV2ApplicationScreen> {
                       return;
                     }
                     setState(() => stage = 1);
-                  }),
+                  });
+                }),
+      ]));
+
+  Widget _ineligibleBanner() => Container(
+      width: double.infinity,
+      margin: EdgeInsets.only(bottom: 12.h),
+      padding: EdgeInsets.all(13.r),
+      decoration: BoxDecoration(
+          color: kWarning2Color,
+          borderRadius: AppStyle.borderRadius8All,
+          border: Border.all(color: kWarningColor.withValues(alpha: .35))),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Icon(Icons.block_outlined, color: kWarningColor),
+        Gap(10.w),
+        Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              Text('Akun belum eligible', style: text12BlackSemiBold),
+              Gap(4.h),
+              Text(controller.ineligibleMessage(),
+                  style: text12HintRegular),
+            ])),
       ]));
 
   Widget _latestApplicationCard(Map<String, dynamic> application) {
