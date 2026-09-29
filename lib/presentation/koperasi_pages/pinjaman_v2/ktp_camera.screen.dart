@@ -30,6 +30,7 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
   bool _capturing = false;
   String? _error;
   String? _capturedPath;
+  int _initGeneration = 0;
 
   @override
   void initState() {
@@ -53,6 +54,7 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
   }
 
   Future<void> _initializeCamera() async {
+    final generation = ++_initGeneration;
     if (mounted) {
       setState(() {
         _initializing = true;
@@ -61,6 +63,7 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
     }
     try {
       final cameras = await availableCameras();
+      if (generation != _initGeneration) return;
       if (cameras.isEmpty) {
         throw CameraException(
             'CameraUnavailable', 'Kamera tidak ditemukan pada perangkat.');
@@ -69,6 +72,8 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
         (camera) => camera.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
+      developer.log('KTP kamera dipilih: ${selected.name}',
+          name: 'KtpCameraScreen');
       final camera = CameraController(
         selected,
         // medium, bukan high: buffer capture full-res + decode pratinjau
@@ -79,8 +84,15 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
         enableAudio: false,
       );
       await camera.initialize();
+      if (generation != _initGeneration) {
+        // Init basi (mis.observer lifecycle memicu init baru saat init ini
+        // masih jalan): buang instance agar tidak menimpa controller aktif
+        // dan menahan perangkat kamera.
+        await camera.dispose();
+        return;
+      }
       await camera.lockCaptureOrientation(DeviceOrientation.portraitUp);
-      if (!mounted) {
+      if (!mounted || generation != _initGeneration) {
         await camera.dispose();
         return;
       }
@@ -105,6 +117,7 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
   }
 
   Future<void> _disposeCamera() async {
+    _initGeneration++;
     final camera = _camera;
     _camera = null;
     try {
@@ -124,6 +137,13 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
     }
     setState(() => _capturing = true);
     try {
+      // Hentikan stream pratinjau dulu: di sebagian SoC, capture saat
+      // streaming full-rate berjalan bikin Camera2 gagal/crash.
+      try {
+        await camera.pausePreview();
+      } catch (_) {
+        // Abaikan: tidak semua perangkat mendukung jeda pratinjau.
+      }
       final file = await camera.takePicture();
       if (!mounted) return;
       setState(() {
@@ -168,6 +188,20 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
     unawaited(_initializeCamera());
   }
 
+  Future<void> _retryAfterError() async {
+    setState(() => _error = null);
+    final camera = _camera;
+    if (camera != null && camera.value.isInitialized) {
+      try {
+        await camera.resumePreview();
+        return;
+      } catch (_) {
+        // Pratinjau tidak bisa dilanjutkan: inisialisasi ulang penuh.
+      }
+    }
+    unawaited(_initializeCamera());
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -201,6 +235,12 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
                 style: text12HintRegular.copyWith(color: Colors.white70),
                 textAlign: TextAlign.center),
             Gap(16.h),
+            ElevatedButton.icon(
+              onPressed: _retryAfterError,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Coba Lagi'),
+            ),
+            Gap(10.h),
             ElevatedButton.icon(
               onPressed: () => Get.back(),
               icon: const Icon(Icons.arrow_back_rounded, size: 18),
