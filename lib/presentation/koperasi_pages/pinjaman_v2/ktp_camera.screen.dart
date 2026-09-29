@@ -82,6 +82,10 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
         // untuk upload.
         ResolutionPreset.medium,
         enableAudio: false,
+        // JPEG eksplisit di Android: menghilangkan ambiguitas format still
+        // capture di HAL yang berbeda-beda. iOS dibiarkan default.
+        imageFormatGroup:
+            Platform.isAndroid ? ImageFormatGroup.jpeg : null,
       );
       await camera.initialize();
       if (generation != _initGeneration) {
@@ -137,15 +141,10 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
     }
     setState(() => _capturing = true);
     try {
-      // Hentikan stream pratinjau dulu: di sebagian SoC, capture saat
-      // streaming full-rate berjalan bikin Camera2 gagal/crash. Timeout
-      // wajib karena pausePreview() hang tanpa selesai di sebagian device
-      // (inilah yang bikin tombol stuck "Mengambil..." selamanya).
-      try {
-        await camera.pausePreview().timeout(const Duration(seconds: 3));
-      } catch (_) {
-        // Abaikan: lanjut capture apa pun yang terjadi pada pratinjau.
-      }
+      // SENGAJA tanpa pausePreview(): terbukti di lapangan bahwa capture
+      // saat preview di-pause tidak pernah selesai di sebagian device
+      // (tombol stuck "Mengambil..." selamanya). takePicture dengan preview
+      // berjalan adalah path yang didukung plugin di semua device.
       late final XFile file;
       try {
         file = await camera.takePicture().timeout(
