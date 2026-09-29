@@ -138,13 +138,23 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
     setState(() => _capturing = true);
     try {
       // Hentikan stream pratinjau dulu: di sebagian SoC, capture saat
-      // streaming full-rate berjalan bikin Camera2 gagal/crash.
+      // streaming full-rate berjalan bikin Camera2 gagal/crash. Timeout
+      // wajib karena pausePreview() hang tanpa selesai di sebagian device
+      // (inilah yang bikin tombol stuck "Mengambil..." selamanya).
       try {
-        await camera.pausePreview();
+        await camera.pausePreview().timeout(const Duration(seconds: 3));
       } catch (_) {
-        // Abaikan: tidak semua perangkat mendukung jeda pratinjau.
+        // Abaikan: lanjut capture apa pun yang terjadi pada pratinjau.
       }
-      final file = await camera.takePicture();
+      late final XFile file;
+      try {
+        file = await camera.takePicture().timeout(
+              const Duration(seconds: 15),
+            );
+      } on TimeoutException {
+        throw CameraException('CaptureTimeout',
+            'Pengambilan foto terlalu lama. Coba lagi.');
+      }
       if (!mounted) return;
       setState(() {
         _capturedPath = file.path;
