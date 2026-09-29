@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -70,7 +71,11 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
       );
       final camera = CameraController(
         selected,
-        ResolutionPreset.high,
+        // medium, bukan high: buffer capture full-res + decode pratinjau
+        // membuat HP RAM kecil OOM dan force-close tepat setelah shutter.
+        // KTP masih terbaca jelas pada preset ini; file asli tetap dipakai
+        // untuk upload.
+        ResolutionPreset.medium,
         enableAudio: false,
       );
       await camera.initialize();
@@ -127,10 +132,25 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
       });
       await _disposeCamera();
     } on CameraException catch (error) {
+      developer.log('KTP capture gagal',
+          name: 'KtpCameraScreen',
+          error: '${error.code}: ${error.description}');
       if (!mounted) return;
       setState(() {
         _capturing = false;
         _error = error.description ?? 'Gagal mengambil foto. Coba lagi.';
+      });
+    } catch (error) {
+      // Perangkat/OEM berbeda melempar tipe exception berbeda dari
+      // takePicture (tidak selalu CameraException). Tanpa catch umum ini,
+      // exception lolos ke Flutter framework dan aplikasi force-close.
+      developer.log('KTP capture gagal (non-kamera)',
+          name: 'KtpCameraScreen', error: error);
+      if (!mounted) return;
+      setState(() {
+        _capturing = false;
+        _error =
+            'Gagal mengambil foto di perangkat ini. Coba lagi atau gunakan HP lain.';
       });
     }
   }
@@ -247,8 +267,13 @@ class _KtpCameraScreenState extends State<KtpCameraScreen>
                 padding: EdgeInsets.all(16.r),
                 child: ClipRRect(
                     borderRadius: BorderRadius.circular(12.r),
+                    // Batasi decode pratinjau: file asli bisa belasan MP dan
+                    // meledakkan memori HP lemah tepat setelah shutter.
+                    // File asli (full-res) tetap yang dikirim ke server.
                     child: Image.file(File(_capturedPath!),
-                        fit: BoxFit.contain, width: double.infinity)))),
+                        fit: BoxFit.contain,
+                        width: double.infinity,
+                        cacheWidth: 1080)))),
         Padding(
           padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 24.h),
           child: Row(children: [
