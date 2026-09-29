@@ -871,7 +871,7 @@ class LoanV2Controller extends GetxController {
 
   Future<String> _deviceFingerprint() async {
     final box = GetStorage();
-    var installationId = box.read<String>('loan_v2_installation_id');
+    var installationId = box.read('loan_v2_installation_id')?.toString();
     if (installationId == null) {
       installationId =
           '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';

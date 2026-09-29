@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -38,6 +40,24 @@ class AppPreference {
   final String _biayaRegistrasi = 'biaya_registrasi';
   final String _biayaRegistrasiPromo = 'biaya_registrasi_promo';
 
+  /// Baca JSON map dari storage secara self-healing: entri korup
+  /// (string bukan JSON, atau bukan object) dikarantina (dihapus) dan
+  /// dibaca sebagai null, bukan melempar crash ke pemanggil. Ini akar
+  /// dari bug "harus hapus data biar tidak crash".
+  Map<String, dynamic>? _readJsonMap(String key) {
+    final raw = _prefs?.getString(key);
+    if (raw == null) return null;
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (error) {
+      developer.log('Corrupt storage entry quarantined',
+          name: 'AppPreference', error: '$key: $error');
+    }
+    unawaited(_prefs?.remove(key));
+    return null;
+  }
+
   Future<void> setCurrentPage(String? page) async {
     await _prefs?.setString(_currentPage, page ?? 'no-define');
   }
@@ -65,39 +85,21 @@ class AppPreference {
 
   Future<void> saveCountDownOrder(int countDown, int id) async {
     int startTime = DateTime.now().millisecondsSinceEpoch;
-    String? countDownData = _prefs?.getString(_countDownOrder);
-
-    Map<String, dynamic> countDownMap = {};
-
-    if (countDownData != null) {
-      countDownMap = json.decode(countDownData);
-    }
+    final countDownMap = _readJsonMap(_countDownOrder) ?? {};
     countDownMap[id.toString()] = startTime;
     await _prefs?.setString(_countDownOrder, json.encode(countDownMap));
   }
 
   Future<void> saveCountDownSavingPayment(int countDown, String id) async {
     int startTime = DateTime.now().millisecondsSinceEpoch;
-    String? countDownData = _prefs?.getString(_countDownPaymentSaving);
-
-    Map<String, dynamic> countDownMap = {};
-
-    if (countDownData != null) {
-      countDownMap = json.decode(countDownData);
-    }
+    final countDownMap = _readJsonMap(_countDownPaymentSaving) ?? {};
     countDownMap[id] = startTime;
     await _prefs?.setString(_countDownPaymentSaving, json.encode(countDownMap));
   }
 
   Future<void> saveCountDownPaymentTopupWallet(int countDown, String id) async {
     int startTime = DateTime.now().millisecondsSinceEpoch;
-    String? countDownData = _prefs?.getString(_countDownPaymentTopupWallet);
-
-    Map<String, dynamic> countDownMap = {};
-
-    if (countDownData != null) {
-      countDownMap = json.decode(countDownData);
-    }
+    final countDownMap = _readJsonMap(_countDownPaymentTopupWallet) ?? {};
     countDownMap[id] = startTime;
     await _prefs?.setString(
         _countDownPaymentTopupWallet, json.encode(countDownMap));
@@ -105,13 +107,7 @@ class AppPreference {
 
   Future<void> saveCountDownPaymentPaylater(int countDown, String id) async {
     int startTime = DateTime.now().millisecondsSinceEpoch;
-    String? countDownData = _prefs?.getString(_countDownPaylaterPayment);
-
-    Map<String, dynamic> countDownMap = {};
-
-    if (countDownData != null) {
-      countDownMap = json.decode(countDownData);
-    }
+    final countDownMap = _readJsonMap(_countDownPaylaterPayment) ?? {};
     countDownMap[id] = startTime;
     await _prefs?.setString(
         _countDownPaylaterPayment, json.encode(countDownMap));
@@ -119,77 +115,51 @@ class AppPreference {
 
   Future<void> saveCountDownPaymentBill(int countDown, String id) async {
     int startTime = DateTime.now().millisecondsSinceEpoch;
-    String? countDownData = _prefs?.getString(_countDownPaymentBill);
-
-    Map<String, dynamic> countDownMap = {};
-
-    if (countDownData != null) {
-      countDownMap = json.decode(countDownData);
-    }
+    final countDownMap = _readJsonMap(_countDownPaymentBill) ?? {};
     countDownMap[id] = startTime;
     await _prefs?.setString(_countDownPaymentBill, json.encode(countDownMap));
   }
 
   int? getCountDownOrder(int id) {
-    String? countDownData = _prefs?.getString(_countDownOrder);
-
-    if (countDownData != null) {
-      Map<String, dynamic> countDownMap = json.decode(countDownData);
-      if (countDownMap.containsKey(id.toString())) {
-        return countDownMap[id.toString()];
-      }
+    final countDownMap = _readJsonMap(_countDownOrder);
+    if (countDownMap != null && countDownMap.containsKey(id.toString())) {
+      return (countDownMap[id.toString()] as num?)?.toInt();
     }
 
     return null;
   }
 
   int? getCountDownSavingPayment(String id) {
-    String? countDownData = _prefs?.getString(_countDownPaymentSaving);
-
-    if (countDownData != null) {
-      Map<String, dynamic> countDownMap = json.decode(countDownData);
-      if (countDownMap.containsKey(id)) {
-        return countDownMap[id.toString()];
-      }
+    final countDownMap = _readJsonMap(_countDownPaymentSaving);
+    if (countDownMap != null && countDownMap.containsKey(id)) {
+      return (countDownMap[id] as num?)?.toInt();
     }
 
     return null;
   }
 
   int? getCountDownPaymentTopupWallet(String id) {
-    String? countDownData = _prefs?.getString(_countDownPaymentTopupWallet);
-
-    if (countDownData != null) {
-      Map<String, dynamic> countDownMap = json.decode(countDownData);
-      if (countDownMap.containsKey(id)) {
-        return countDownMap[id.toString()];
-      }
+    final countDownMap = _readJsonMap(_countDownPaymentTopupWallet);
+    if (countDownMap != null && countDownMap.containsKey(id)) {
+      return (countDownMap[id] as num?)?.toInt();
     }
 
     return null;
   }
 
   int? getCountDownPaymentPaylater(String id) {
-    String? countDownData = _prefs?.getString(_countDownPaylaterPayment);
-
-    if (countDownData != null) {
-      Map<String, dynamic> countDownMap = json.decode(countDownData);
-      if (countDownMap.containsKey(id)) {
-        return countDownMap[id.toString()];
-      }
+    final countDownMap = _readJsonMap(_countDownPaylaterPayment);
+    if (countDownMap != null && countDownMap.containsKey(id)) {
+      return (countDownMap[id] as num?)?.toInt();
     }
 
     return null;
   }
 
   int? getCountDownPaymentBill(String id) {
-    String? countDownData = _prefs?.getString(_countDownPaymentBill);
-
-    if (countDownData != null) {
-      Map<String, dynamic> countDownMap = json.decode(countDownData);
-      if (countDownMap.containsKey(id)) {
-        return countDownMap[id.toString()];
-      }
+    final countDownMap = _readJsonMap(_countDownPaymentBill);
+    if (countDownMap != null && countDownMap.containsKey(id)) {
+      return (countDownMap[id] as num?)?.toInt();
     }
 
     return null;
@@ -224,7 +194,10 @@ class AppPreference {
       if (data['trx_id'] != null) {
         saveTrxId(data['trx_id']);
       }
-      saveEmail(data['user']['email']);
+      final user = data['user'];
+      if (user is Map && user['email'] is String) {
+        saveEmail(user['email'] as String);
+      }
     }
   }
 
@@ -237,33 +210,35 @@ class AppPreference {
   }
 
   UserModel? getUserData() {
-    String? userDataJson = _prefs?.getString(_userDataKey);
-
-    if (userDataJson != null) {
-      Map<String, dynamic> userDataMap = json.decode(userDataJson);
+    final userDataMap = _readJsonMap(_userDataKey);
+    if (userDataMap == null) return null;
+    try {
       return UserModel.fromJson(userDataMap);
-    } else {
+    } catch (error) {
+      developer.log('Corrupt user_data quarantined',
+          name: 'AppPreference', error: error);
+      unawaited(_prefs?.remove(_userDataKey));
       return null;
     }
   }
 
   UserProfile? getUserProfile() {
-    String? userDataJson = _prefs?.getString(_userProfile);
-
-    if (userDataJson != null) {
-      Map<String, dynamic> userDataMap = json.decode(userDataJson);
+    final userDataMap = _readJsonMap(_userProfile);
+    if (userDataMap == null) return null;
+    try {
       return UserProfile.fromJson(userDataMap);
-    } else {
+    } catch (error) {
+      developer.log('Corrupt user_profile quarantined',
+          name: 'AppPreference', error: error);
+      unawaited(_prefs?.remove(_userProfile));
       return null;
     }
   }
 
   void updateUserData(UserModel newUserData) {
-    String? existingUserDataJson = _prefs?.getString(_userDataKey);
+    final existingUserDataMap = _readJsonMap(_userDataKey);
 
-    if (existingUserDataJson != null) {
-      Map<String, dynamic> existingUserDataMap =
-          json.decode(existingUserDataJson);
+    if (existingUserDataMap != null) {
       existingUserDataMap.forEach((key, value) {
         if (newUserData.toJson().containsKey(key)) {
           existingUserDataMap[key] = newUserData.toJson()[key];
@@ -275,11 +250,9 @@ class AppPreference {
   }
 
   void updateUserProfile(UserProfile newUserData) {
-    String? existingUserDataJson = _prefs?.getString(_userProfile);
+    final existingUserDataMap = _readJsonMap(_userProfile);
 
-    if (existingUserDataJson != null) {
-      Map<String, dynamic> existingUserDataMap =
-          json.decode(existingUserDataJson);
+    if (existingUserDataMap != null) {
       existingUserDataMap.forEach((key, value) {
         if (newUserData.toJson().containsKey(key)) {
           existingUserDataMap[key] = newUserData.toJson()[key];
@@ -384,11 +357,14 @@ class AppPreference {
   }
 
   AddressModel? getAddress() {
-    String? addressJson = _prefs?.getString(_address);
-    if (addressJson != null) {
-      Map<String, dynamic> addressMap = json.decode(addressJson);
+    final addressMap = _readJsonMap(_address);
+    if (addressMap == null) return null;
+    try {
       return AddressModel.fromJson(addressMap);
-    } else {
+    } catch (error) {
+      developer.log('Corrupt address quarantined',
+          name: 'AppPreference', error: error);
+      unawaited(_prefs?.remove(_address));
       return null;
     }
   }

@@ -8,7 +8,8 @@ class UserModel {
   UserModel.fromJson(Map<String, dynamic> json) {
     trxId = json['trx_id'];
     token = json['token'];
-    user = json['user'] != null ? User.fromJson(json['user']) : null;
+    final user = json['user'];
+    this.user = user is Map ? User.fromJson(Map<String, dynamic>.from(user)) : null;
   }
 
   Map<String, dynamic> toJson() {
