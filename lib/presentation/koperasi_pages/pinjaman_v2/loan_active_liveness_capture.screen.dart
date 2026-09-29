@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
@@ -40,6 +41,7 @@ class _LoanActiveLivenessCaptureScreenState
   bool _initializing = true;
   bool _capturing = false;
   bool _aborted = false;
+  bool _lowResolutionFallback = false;
   bool _recentering = false;
   bool _processingFrame = false;
   bool _faceDetectorClosed = false;
@@ -88,7 +90,7 @@ class _LoanActiveLivenessCaptureScreenState
     }
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _initializeCamera({bool lowResolution = false}) async {
     if (mounted) {
       setState(() {
         _initializing = true;
@@ -107,7 +109,7 @@ class _LoanActiveLivenessCaptureScreenState
       );
       final camera = CameraController(
         selected,
-        ResolutionPreset.medium,
+        lowResolution ? ResolutionPreset.low : ResolutionPreset.medium,
         enableAudio: false,
         fps: 15,
         imageFormatGroup: ImageFormatGroup.nv21,
@@ -122,6 +124,7 @@ class _LoanActiveLivenessCaptureScreenState
       setState(() {
         _camera = camera;
         _cameraDescription = selected;
+        _lowResolutionFallback = lowResolution;
         _initializing = false;
       });
     } on CameraException catch (exception) {
@@ -183,7 +186,7 @@ class _LoanActiveLivenessCaptureScreenState
         _actionIndex = -2;
       });
       final baselineWaiter = _beginDetectionPhase(_DetectionPhase.baseline);
-      await camera.startVideoRecording(onAvailable: _processCameraImage);
+      await _startVideoRecordingWithFallback();
       await _waitForDetection(
         baselineWaiter,
         const Duration(seconds: 5),
@@ -224,7 +227,9 @@ class _LoanActiveLivenessCaptureScreenState
       });
       await Future<void>.delayed(const Duration(milliseconds: 700));
       _endDetectionPhase();
-      final video = await camera.stopVideoRecording();
+      final current = _camera;
+      if (current == null || !mounted) return;
+      final video = await current.stopVideoRecording();
       if (!mounted) return;
       Navigator.of(context).pop(video.path);
     } on CameraException catch (exception) {
@@ -300,6 +305,48 @@ class _LoanActiveLivenessCaptureScreenState
       }
     }
     await camera.dispose();
+  }
+
+  /// Mulai rekam video dengan fallback resolusi. Sebagian HAL kamera depan
+  /// menolak konfigurasi stream video pada preset medium
+  /// (`endConfigure: ... Error configuring streams ... (-38)`). Kalau itu
+  /// terjadi, kamera di-init ulang pada preset low lalu perekaman dicoba
+  /// sekali lagi sebelum menyerah dengan error.
+  Future<void> _startVideoRecordingWithFallback() async {
+    final camera = _camera;
+    if (camera == null || !_cameraReady) {
+      throw const _CaptureFlowException(
+          'Kamera belum siap. Silakan coba lagi.');
+    }
+    try {
+      await camera.startVideoRecording(onAvailable: _processCameraImage);
+      return;
+    } on CameraException catch (error) {
+      if (!_isStreamConfigError(error) || _lowResolutionFallback) rethrow;
+      developer.log('Konfigurasi stream video ditolak, fallback ke low',
+          name: 'LoanLivenessCapture', error: error.description);
+    }
+    await _disposeCamera();
+    if (_aborted || !mounted) {
+      throw const _CaptureFlowException('Verifikasi wajah dibatalkan.');
+    }
+    await _initializeCamera(lowResolution: true);
+    final retry = _camera;
+    if (retry == null ||
+        !retry.value.isInitialized ||
+        _aborted ||
+        !mounted) {
+      throw const _CaptureFlowException(
+          'Perekaman video tidak didukung di perangkat ini. Silakan coba di HP lain.');
+    }
+    await retry.startVideoRecording(onAvailable: _processCameraImage);
+  }
+
+  bool _isStreamConfigError(CameraException error) {
+    final text = '${error.code} ${error.description ?? ''}'.toLowerCase();
+    return text.contains('endconfigure') ||
+        text.contains('configuring streams') ||
+        text.contains('configure_stream');
   }
 
   void _setError(String message) {
