@@ -10,6 +10,7 @@ import 'package:get_storage/get_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:jetmarket/domain/core/interfaces/file_repository.dart';
 import 'package:jetmarket/domain/core/interfaces/loan_v2_repository.dart';
+import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/ktp_camera.screen.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_signature_pad.screen.dart';
 import 'package:jetmarket/presentation/koperasi_pages/pinjaman_v2/loan_agreement_preview.screen.dart';
 import 'package:jetmarket/utils/network/action_status.dart';
@@ -344,9 +345,12 @@ class LoanV2Controller extends GetxController {
   }
 
   Future<void> pickKtp() async {
-    final image =
-        await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
-    if (image != null) ktpPath.value = image.path;
+    // Kamera in-app (bukan image_picker): image_picker membuka aplikasi
+    // kamera bawaan sehingga activity Flutter bisa dibunuh OS dan pengguna
+    // terlempar ke home. Layar ini mengembalikan path file atau null.
+    final path = await Get.to<String>(() => const KtpCameraScreen());
+    if (path == null || path.isEmpty) return;
+    ktpPath.value = path;
   }
 
   Future<Map<String, dynamic>?> previewApplication(int requestedAmount) async {
